@@ -1,0 +1,15 @@
+# Sensitive Imagery and Spatial Data
+data/
+
+# Local Offline Model Weights
+models/
+
+# Python Virtual Environments and Cache
+venv/
+.env
+__pycache__/
+*.pyc
+
+# OS Generated Files
+.DS_Store
+Thumbs.db

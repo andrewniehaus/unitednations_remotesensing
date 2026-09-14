@@ -1,0 +1,50 @@
+name: remote-sensing-ai
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  # Python Core Runtime
+  - python=3.10
+
+  # System & Geospatial Core Drivers
+  # (Removed redundant libgdal, proj, geos to prevent version mismatches)
+  - gdal>=3.8.0
+
+  # Geospatial Data Handling & I/O
+  - rasterio>=1.3.0
+  - geopandas>=0.14.0
+  - fiona
+  - pyproj
+  - shapely>=2.0.0
+  - rioxarray
+
+  # Scientific Computing, Data Structures & Web
+  - numpy>=1.24.0
+  - pandas
+  - scipy
+  - requests
+  - beautifulsoup4
+  - urllib3
+  - pyyaml
+  - matplotlib
+
+  # Image Processing Tools (Moved from Pip to Conda to prevent C++ link breaks)
+  - pillow>=10.0.0
+  - opencv
+
+  # Web UI & Application Framework
+  - streamlit>=1.30.0
+
+  # Pip dependencies for PyTorch CUDA and Hugging Face VLMs
+  - pip:
+      # PyTorch Stack
+      - torch>=2.2.0
+      - torchvision
+      - torchaudio
+
+      # Vision-Language Models & Transformer Frameworks
+      - transformers>=4.38.0
+      - huggingface_hub
+      - accelerate>=0.26.0
+      - timm>=0.9.0
+      - einops
