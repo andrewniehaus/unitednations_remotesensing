@@ -27,6 +27,10 @@ dependencies:
   - urllib3
   - pyyaml
   - matplotlib
+  # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Added missing dependencies:
+  # scikit-learn (detection/hard_negative_miner.py) and rasterstats (ingestion/spatial_overlay.py).
+  - scikit-learn
+  - rasterstats
 
   # Image Processing Tools (Moved from Pip to Conda to prevent C++ link breaks)
   - pillow>=10.0.0

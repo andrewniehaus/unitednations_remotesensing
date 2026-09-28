@@ -1,6 +1,9 @@
 """
 src/tiling/adaptive_overlap.py
 
+[EDIT 2026-09-28 | Claude Code for charliefp03-dg] File renamed from adaptive_overlay.py to
+adaptive_overlap.py to match this docstring and the import in parallel_chipper.py.
+
 Dynamic Stride and Overlap Calculation Module.
 
 Calculates tile stride dynamically based on target object prompt dimensions 

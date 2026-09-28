@@ -178,3 +178,46 @@ class Florence2Adapter:
             return pd.DataFrame(columns=["xmin", "ymin", "xmax", "ymax", "label", "confidence"])
 
         return pd.concat(batch_results, ignore_index=True)
+
+    # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Added predict() so this adapter satisfies the
+    # interface BatchInferenceRunner calls: predict(image_data=..., targets=..., **kwargs) returning
+    # [{"bbox": [xmin, ymin, xmax, ymax], "label": str, "confidence": float}]. It wraps predict_tile().
+    def predict(
+        self,
+        image_data: Union[str, Path, Image.Image],
+        targets: Union[str, List[str]],
+        task_prompt: str = "<OPEN_VOCABULARY_DETECTION>",
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        """
+        Standard detection interface used by BatchInferenceRunner.
+
+        Args:
+            image_data: Tile path or PIL Image.
+            targets: Catalog key(s) from PromptManager (e.g. 'tents') or raw prompt text.
+            task_prompt: Florence-2 task token.
+            **kwargs: Ignored; accepted for interface compatibility (e.g. box_threshold).
+
+        Returns:
+            List of detection dicts in local tile pixel coordinates.
+        """
+        from src.detection.prompt_manager import PromptManager
+
+        target_list = [targets] if isinstance(targets, str) else list(targets)
+        prompt_manager = PromptManager()
+        text_input = " . ".join(
+            prompt_manager.get_target(t)["primary_prompt"] for t in target_list
+        )
+
+        df = self.predict_tile(
+            image_input=image_data, task_prompt=task_prompt, text_input=text_input
+        )
+
+        return [
+            {
+                "bbox": [row.xmin, row.ymin, row.xmax, row.ymax],
+                "label": row.label,
+                "confidence": row.confidence,
+            }
+            for row in df.itertuples(index=False)
+        ]

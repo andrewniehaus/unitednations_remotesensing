@@ -35,7 +35,9 @@ class CoordinateTransformer:
         """
         # Calculate spatial coordinates for the Top-Left and Bottom-Right corners of the bounding box
         tl_x, tl_y = xy(self.transform, ymin, xmin, offset='ul')
-        br_x, br_y = xy(self.transform, ymax, xmax, offset='dr')
+        # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] offset='dr' is not a valid rasterio option;
+        # changed to 'lr' (lower-right corner of the pixel).
+        br_x, br_y = xy(self.transform, ymax, xmax, offset='lr')
         
         return (min(tl_x, br_x), min(tl_y, br_y), max(tl_x, br_x), max(tl_y, br_y))
 

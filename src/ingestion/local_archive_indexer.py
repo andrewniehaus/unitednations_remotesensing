@@ -276,8 +276,13 @@ class LocalArchiveIndexer:
         target_poly = box(*target_bbox)
         results = []
 
-        t_start = datetime.fromisoformat(start_time) if start_time else None
-        t_end = datetime.fromisoformat(end_time) if end_time else None
+        # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Normalize all datetimes to timezone-aware UTC.
+        # Comparing naive and aware datetimes raised an uncaught TypeError. Naive inputs are assumed UTC.
+        def _as_utc(dt: datetime) -> datetime:
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+        t_start = _as_utc(datetime.fromisoformat(start_time)) if start_time else None
+        t_end = _as_utc(datetime.fromisoformat(end_time)) if end_time else None
 
         for item in self.catalog:
             if required_modality and item["modality"].lower() != required_modality.lower():
@@ -286,7 +291,7 @@ class LocalArchiveIndexer:
             # Temporal filtering
             if t_start or t_end:
                 try:
-                    item_dt = datetime.fromisoformat(item["timestamp"])
+                    item_dt = _as_utc(datetime.fromisoformat(item["timestamp"]))  # [EDIT 2026-09-28 | Claude Code for charliefp03-dg]
                     if t_start and item_dt < t_start:
                         continue
                     if t_end and item_dt > t_end:

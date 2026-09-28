@@ -11,7 +11,9 @@ from typing import Dict, List, Tuple, Union
 import numpy as np
 import pandas as pd
 from scipy.ndimage import binary_opening, binary_closing
-from shapely.geometry import Polygon, Shape
+# [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Removed non-existent "Shape" import, which
+# raised ImportError and broke the whole change_detection package.
+from shapely.geometry import Polygon
 from rasterio.features import shapes
 
 # Dynamic Configuration Import (Air-Gapped Workstation Standard)
@@ -107,6 +109,9 @@ class ChangeMaskGenerator:
 
         records = []
         # Extract shapes using rasterio features
+        # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Cast to uint8: scipy's binary
+        # opening/closing returns a bool array, which rasterio.features.shapes() rejects.
+        clean_mask = clean_mask.astype(np.uint8)
         for geom_dict, val in shapes(clean_mask, mask=clean_mask > 0):
             if val == 0:
                 continue

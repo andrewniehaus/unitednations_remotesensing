@@ -4,6 +4,7 @@ Provides a standardized interface for local, air-gapped Grounding DINO inference
 conforming to the project's detection module contract.
 """
 
+import inspect  # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Used for transformers version compatibility
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -135,11 +136,19 @@ class GroundingDINOAdapter:
             outputs = self.model(**inputs)
 
         # Post-process outputs to absolute tile pixel coordinates
-        results = self.processor.post_process_grounded_object_detection(
+        # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Newer transformers releases renamed
+        # "box_threshold" to "threshold". Pick whichever keyword the installed version accepts.
+        post_process = self.processor.post_process_grounded_object_detection
+        box_kwarg = (
+            "threshold"
+            if "threshold" in inspect.signature(post_process).parameters
+            else "box_threshold"
+        )
+        results = post_process(
             outputs=outputs,
             input_ids=inputs["input_ids"],
-            box_threshold=b_thresh,
             text_threshold=t_thresh,
+            **{box_kwarg: b_thresh},
             target_sizes=[image.size[::-1]],  # (height, width)
         )[0]
 

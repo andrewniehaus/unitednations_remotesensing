@@ -11,6 +11,8 @@ from rasterio.windows import Window
 
 from src import config
 
+# [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Import now resolves: Normalizer.py was renamed
+# to normalizer.py (lowercase, matching this import) and ArrayNormalizer was implemented there.
 from src.tiling.normalizer import ArrayNormalizer
 
 
@@ -217,8 +219,10 @@ class RasterChipper:
             ],
         }
 
-    def chip_raster(self, input_path: Path) -> Path:4
-    """Executes the complete tiling workflow for a single input raster using concurrent I/O.
+    # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Fixed syntax error: removed stray "4"
+    # after the return annotation and re-indented the docstring/body into the method.
+    def chip_raster(self, input_path: Path) -> Path:
+        """Executes the complete tiling workflow for a single input raster using concurrent I/O.
 
         Args:
             input_path: Path to the source GeoTIFF.
@@ -226,9 +230,9 @@ class RasterChipper:
         Returns:
             Path to the generated tile manifest JSON.
         """
-    tile_records = []
-    source_stem = input_path.stem
-    futures = []
+        tile_records = []
+        source_stem = input_path.stem
+        futures = []
 
         with rasterio.open(input_path) as src:
             nodata_val = src.nodata if src.nodata is not None else self.fill_value

@@ -49,3 +49,11 @@ DEFAULT_CRS = "EPSG:4326"  # Fallback spatial reference system
 # Array Normalization Parameters
 DEFAULT_RGB_BANDS = (0, 1, 2)  # Indices for Red, Green, Blue in your MS data (0-indexed)
 DEFAULT_CLIP_PERCENTILE = (2.0, 98.0)  # Robust min/max scaling to ignore atmospheric outliers
+
+# [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Added settings referenced by chipper.py,
+# batch_runner.py and vector_writer.py that were previously undefined (import-time AttributeError).
+DEFAULT_PADDING_MODE = "constant"  # np.pad mode for partial edge tiles ('constant', 'reflect', 'edge')
+DEFAULT_FILL_VALUE = 0             # Pad/NoData value for written tiles (constant padding mode)
+MANIFEST_FILENAME = "tile_manifest.json"  # Chipper manifest written to INTERIM_DIR
+TILE_NAMING_SCHEMA = "{source_name}_r{row}_c{col}.tif"  # Tile filename template used by chipper
+DEFAULT_OVERWRITE = False  # If False, existing tiles / inference JSONs are skipped (resumable runs)

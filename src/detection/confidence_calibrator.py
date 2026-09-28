@@ -10,7 +10,8 @@ well-calibrated posterior probability estimates ($P(Y=1|S)$).
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+# [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Added missing "Tuple" import (NameError at class definition).
+from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize

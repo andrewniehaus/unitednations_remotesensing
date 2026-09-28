@@ -2,6 +2,12 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+# [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Added missing imports for Polygon, Affine and gpd,
+# which were used below but never imported (NameError at class definition / export).
+import geopandas as gpd
+from rasterio.transform import Affine
+from shapely.geometry import Polygon
+
 from src import config
 
 class VectorWriter:

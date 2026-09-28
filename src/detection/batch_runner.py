@@ -31,8 +31,13 @@ class BatchInferenceRunner:
         Initializes the runner with an instantiated model adapter or wrapper.
 
         Args:
-            model_adapter: Instance of LocalVLMWrapper or GroundingDINOAdapter.
+            model_adapter: Instance of LocalVLMWrapper, Florence2Adapter or GroundingDINOAdapter.
+                Must expose predict(image_data, targets, **kwargs) returning
+                [{"bbox": [xmin, ymin, xmax, ymax], "label": str, "confidence": float}].
         """
+        # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Documented the adapter contract above.
+        # Florence2Adapter and LocalVLMWrapper were updated to match it (previously only
+        # GroundingDINOAdapter did, so the other two failed with AttributeError/TypeError here).
         self.adapter = model_adapter
 
     def _clear_vram(self) -> None:

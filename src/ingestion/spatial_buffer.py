@@ -14,6 +14,9 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import rasterio
+# [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Explicitly import the features submodule;
+# "import rasterio" alone does not load it, so rasterio.features.geometry_window raised AttributeError.
+import rasterio.features
 from rasterio.windows import Window
 from shapely.geometry import Point, Polygon, box
 from pyproj import CRS, Transformer

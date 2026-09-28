@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Union
+from typing import Any, List, Union  # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Added Any, List for new predict() signature
 
 import numpy as np
 import torch
@@ -115,19 +115,36 @@ class LocalVLMWrapper:
         # Florence-2 expects the task token followed by the text query
         return f"{task_prefix} {text_query}"
 
-    def predict(self, image: Image.Image, text_query: str) -> list[dict]:
+    # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Signature changed from
+    # predict(image, text_query) to predict(image_data, targets, task_prefix, **kwargs) to match the
+    # interface BatchInferenceRunner calls. Image ingestion now happens inside predict().
+    def predict(
+        self,
+        image_data: Union[Path, np.ndarray, Image.Image],
+        targets: Union[str, List[str]],
+        task_prefix: str = "<CAPTION_TO_PHRASE>",
+        **kwargs: Any,
+    ) -> list[dict]:
         """
         Step 4: Offline Inference
         Executes the forward pass on the GPU in a strict no-grad context for memory efficiency.
 
         Args:
-            image: Standardized PIL Image (from ingest_image).
-            text_query: The plain text object to search for.
+            image_data: Tile path, numpy array (3, H, W) or PIL Image.
+            targets: Plain text object(s) to search for.
+            task_prefix: The model-specific task token.
+            **kwargs: Ignored; accepted for interface compatibility (e.g. box_threshold).
 
         Returns:
             List of standardized detection dictionaries.
         """
-        prompt = self.format_prompt(text_query)
+        image = (
+            image_data.convert("RGB")
+            if isinstance(image_data, Image.Image)
+            else self.ingest_image(image_data)
+        )
+        text_query = targets if isinstance(targets, str) else ", ".join(targets)
+        prompt = self.format_prompt(text_query, task_prefix=task_prefix)
         
         # Process inputs and push to hardware specified in config
         inputs = self.processor(text=prompt, images=image, return_tensors="pt")
@@ -147,7 +164,7 @@ class LocalVLMWrapper:
                 do_sample=False
             )
 
-        return self._standardize_output(generated_ids, image.size, task_prefix="<CAPTION_TO_PHRASE>")
+        return self._standardize_output(generated_ids, image.size, task_prefix=task_prefix)
 
     def _standardize_output(self, generated_ids: torch.Tensor, image_size: tuple, task_prefix: str) -> list[dict]:
         """
