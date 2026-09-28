@@ -72,6 +72,14 @@ class TimeSeriesAggregator:
                 })
                 continue
 
+            # Assert to clear static type warning
+            assert baseline_embedding is not None
+            
+            # Compute similarity against the established baseline ($T_n$ vs $T_1$)
+            sim_score = self.similarity_engine.compute_similarity(
+                baseline_embedding, current_embedding
+            ).item()
+
             # Compute similarity against the established baseline ($T_n$ vs $T_1$)
             sim_score = self.similarity_engine.compute_similarity(
                 baseline_embedding, current_embedding

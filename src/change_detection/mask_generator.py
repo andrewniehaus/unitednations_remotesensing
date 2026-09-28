@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Union
 import numpy as np
 import pandas as pd
 from scipy.ndimage import binary_opening, binary_closing
-from shapely.geometry import Polygon, Shape
+from shapely.geometry import Polygon
 from rasterio.features import shapes
 
 # Dynamic Configuration Import (Air-Gapped Workstation Standard)
