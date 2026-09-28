@@ -17,6 +17,7 @@ dependencies:
   - pyproj
   - shapely>=2.0.0
   - rioxarray
+  - rasterstats
 
   # Scientific Computing, Data Structures & Web
   - numpy>=1.24.0
@@ -27,6 +28,9 @@ dependencies:
   - urllib3
   - pyyaml
   - matplotlib
+  - scikit-learn
+  - networkx
+  - tqdm
 
   # Image Processing Tools (Moved from Pip to Conda to prevent C++ link breaks)
   - pillow>=10.0.0
@@ -48,3 +52,5 @@ dependencies:
       - accelerate>=0.26.0
       - timm>=0.9.0
       - einops
+
+
