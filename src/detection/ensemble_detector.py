@@ -1,6 +1,6 @@
-"""
-src/detection/ensemble_detector.py
+# src/detection/ensemble_detector.py
 
+"""
 Multi-Model Ensemble and Prediction Reconciler.
 
 Combines, deduplicates, and fuses overlapping bounding box predictions from multiple 
@@ -8,8 +8,7 @@ independent Vision-Language Model adapters (e.g., Florence-2, Grounding DINO).
 Employs Weighted Box Fusion (WBF), consensus scoring, and cross-model label alignment.
 """
 
-from typing import Dict, List, Optional, Tuple, Union
-import numpy as np
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import torch
 import torchvision.ops as ops
@@ -66,6 +65,12 @@ class EnsembleDetector:
         if boxes.numel() == 0:
             return boxes, scores, []
 
+        # FIX 1: Sort boxes descending by score so high-confidence predictions anchor the clusters
+        sort_idx = torch.argsort(scores, descending=True)
+        boxes = boxes[sort_idx]
+        scores = scores[sort_idx]
+        model_ids = [model_ids[idx.item()] for idx in sort_idx]
+
         weights = torch.tensor(
             [self.model_weights.get(m, 1.0) for m in model_ids],
             dtype=config.TORCH_DTYPE,
@@ -84,8 +89,9 @@ class EnsembleDetector:
             if visited[i]:
                 continue
 
-            # Identify matching overlapping boxes from cluster
-            matches = torch.nonzero(iou_matrix[i] >= self.iou_threshold).squeeze(1)
+            # FIX 2: Identify matching boxes, strictly excluding those already assigned to previous clusters
+            condition = (iou_matrix[i] >= self.iou_threshold) & (~visited)
+            matches = torch.nonzero(condition).squeeze(1)
             visited[matches] = True
 
             cluster_boxes = boxes[matches]
@@ -96,10 +102,10 @@ class EnsembleDetector:
             combined_weights = (cluster_scores * cluster_weights).unsqueeze(1)
             weight_sum = combined_weights.sum(dim=0)
 
-            # Feature 1: Coordinate Fusion
+            # Coordinate Fusion
             weighted_box = (cluster_boxes * combined_weights).sum(dim=0) / torch.clamp(weight_sum, min=1e-6)
             
-            # Feature 2: Consensus Scoring
+            # Consensus Scoring
             unique_models = len(set([model_ids[m.item()] for m in matches]))
             base_score = torch.max(cluster_scores)
             
