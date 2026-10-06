@@ -1,6 +1,6 @@
-"""
-src/ingestion/spatial_buffer.py
+# src/ingestion/spatial_buffer.py
 
+"""
 Spatial-Temporal Incident Buffering and Imagery Queuing Engine.
 
 Converts geolocated incident point coordinates (e.g., from Liveuamap or manual reports) 
@@ -9,17 +9,13 @@ extents in config.RAW_DIR to automatically queue target raster windows for downs
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
-import numpy as np
+from typing import Dict, List, Optional, Union
 import pandas as pd
 import geopandas as gpd
 import rasterio
-# [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Explicitly import the features submodule;
-# "import rasterio" alone does not load it, so rasterio.features.geometry_window raised AttributeError.
 import rasterio.features
 from rasterio.windows import Window
 from shapely.geometry import Point, Polygon, box
-from pyproj import CRS, Transformer
 
 # Dynamic Configuration Import (Air-Gapped Workstation Standard)
 from src import config
@@ -93,7 +89,7 @@ class SpatialBufferEngine:
         gdf_bbox = gpd.GeoDataFrame(geometry=[bbox_utm], crs=utm_crs).to_crs(self.default_crs)
         return gdf_bbox.geometry.iloc[0]
 
-    def scan_raw_imagery_extents(self) -> List[Dict[str, Union[str, Path, Polygon]]]:
+    def scan_raw_imagery_extents(self) -> List[Dict[str, Union[str, Path, Polygon, int]]]:
         """
         Feature 2: Lightweight Metadata Indexing.
         Scans config.RAW_DIR for GeoTIFF files and extracts spatial bounding boxes 
@@ -109,16 +105,22 @@ class SpatialBufferEngine:
         for rpath in raster_files:
             try:
                 with rasterio.open(rpath) as src:
+                    raster_crs = src.crs
+                    
+                    # Strict validation to prevent TypeErrors in GeoPandas reprojection
+                    if raster_crs is None:
+                        continue
+                        
                     bounds = src.bounds
                     poly_native = box(bounds.left, bounds.bottom, bounds.right, bounds.top)
                     
                     # Convert bounds to EPSG:4326 for uniform spatial index matching
-                    gdf_poly = gpd.GeoDataFrame(geometry=[poly_native], crs=src.crs)
+                    gdf_poly = gpd.GeoDataFrame(geometry=[poly_native], crs=raster_crs)
                     gdf_wgs84 = gdf_poly.to_crs(self.default_crs)
 
                     index.append({
                         "path": rpath,
-                        "crs": str(src.crs),
+                        "crs": str(raster_crs),
                         "geometry": gdf_wgs84.geometry.iloc[0],
                         "width": src.width,
                         "height": src.height,
@@ -134,7 +136,7 @@ class SpatialBufferEngine:
         lon_col: str = "longitude",
         lat_col: str = "latitude",
         buffer_meters: Optional[float] = None
-    ) -> List[Dict[str, Union[str, Path, Window, int]]]:
+    ) -> List[Dict[str, Union[str, Path, int]]]:
         """
         Features 3 & 5: Batch Incident Queueing and Window Calculation.
         Intersects buffered incident locations against raw imagery extents and computes 
@@ -170,9 +172,13 @@ class SpatialBufferEngine:
 
                     # Compute pixel window offsets using rasterio
                     with rasterio.open(r_path) as src:
+                        raster_crs = src.crs
+                        if raster_crs is None:
+                            continue
+
                         # Reproject buffer polygon into native raster CRS
                         gdf_buf = gpd.GeoDataFrame(geometry=[buffer_poly], crs=self.default_crs)
-                        gdf_native = gdf_buf.to_crs(src.crs)
+                        gdf_native = gdf_buf.to_crs(raster_crs)
                         poly_native = gdf_native.geometry.iloc[0]
 
                         # Calculate intersecting pixel window
@@ -185,7 +191,7 @@ class SpatialBufferEngine:
                             "window_col_off": win.col_off,
                             "window_height": win.height,
                             "window_width": win.width,
-                            "target_crs": str(src.crs),
+                            "target_crs": str(raster_crs),
                         })
 
         return extraction_manifest
