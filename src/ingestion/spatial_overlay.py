@@ -1,6 +1,4 @@
 """
-src/georeferencing/spatial_overlay.py
-
 Contextual Vector Overlay and Population Exposure Enrichment Module.
 
 Intersects model prediction vectors (e.g., detected change or object polygons) 
@@ -66,6 +64,9 @@ class SpatialOverlayEngine:
         if predictions_gdf.empty or not self.building_path.exists():
             return predictions_gdf
 
+        if predictions_gdf.crs is None:
+            raise ValueError("Input predictions_gdf lacks a CRS definition. Cannot harmonize with building footprints.")
+
         # Load offline vector footprints
         buildings_gdf = gpd.read_file(self.building_path)
 
@@ -116,6 +117,9 @@ class SpatialOverlayEngine:
         # Ensure prediction vectors match population raster CRS prior to zonal extraction
         with rasterio.open(self.population_path) as src:
             pop_crs = src.crs
+            
+        if pop_crs is None:
+            raise ValueError(f"Population raster at {self.population_path} lacks a defined CRS.")
 
         if gdf_copy.crs != pop_crs:
             gdf_copy = gdf_copy.to_crs(pop_crs)

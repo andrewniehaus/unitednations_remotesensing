@@ -1,6 +1,4 @@
 """
-src/change_detection/time_series_aggregator.py
-
 Multi-Temporal Sequence Analysis Module.
 
 Tracks latent similarity decay across a chronological stack of imagery to pinpoint 
@@ -71,6 +69,10 @@ class TimeSeriesAggregator:
                     "status": "baseline"
                 })
                 continue
+
+            # Explicit type guard to satisfy Pylance static analysis
+            if baseline_embedding is None:
+                raise ValueError("Baseline embedding was not initialized.")
 
             # Compute similarity against the established baseline ($T_n$ vs $T_1$)
             sim_score = self.similarity_engine.compute_similarity(

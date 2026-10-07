@@ -1,5 +1,3 @@
-# src/ingestion/spatial_buffer.py
-
 """
 Spatial-Temporal Incident Buffering and Imagery Queuing Engine.
 
@@ -9,7 +7,7 @@ extents in config.RAW_DIR to automatically queue target raster windows for downs
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TypedDict, cast
 import pandas as pd
 import geopandas as gpd
 import rasterio
@@ -19,6 +17,23 @@ from shapely.geometry import Point, Polygon, box
 
 # Dynamic Configuration Import (Air-Gapped Workstation Standard)
 from src import config
+
+
+class RasterIndexItem(TypedDict):
+    path: Path
+    crs: str
+    geometry: Polygon
+    width: int
+    height: int
+
+class ExtractionManifestItem(TypedDict):
+    incident_id: Any
+    raster_path: Path
+    window_row_off: float
+    window_col_off: float
+    window_height: float
+    window_width: float
+    target_crs: str
 
 
 class SpatialBufferEngine:
@@ -80,27 +95,27 @@ class SpatialBufferEngine:
             crs=self.default_crs
         ).to_crs(utm_crs)
 
-        # Apply metric buffer and get bounding box extent
-        buffered_geom = gdf_point.buffer(dist).iloc[0]
+        # Apply metric buffer and get bounding box extent. Cast to Polygon to resolve Pylance Series ambiguity.
+        buffered_geom = cast(Polygon, gdf_point.buffer(dist).iloc[0])
         minx, miny, maxx, maxy = buffered_geom.bounds
         bbox_utm = box(minx, miny, maxx, maxy)
 
         # Reproject bounding box back to EPSG:4326
         gdf_bbox = gpd.GeoDataFrame(geometry=[bbox_utm], crs=utm_crs).to_crs(self.default_crs)
-        return gdf_bbox.geometry.iloc[0]
+        return cast(Polygon, gdf_bbox.geometry.iloc[0])
 
-    def scan_raw_imagery_extents(self) -> List[Dict[str, Union[str, Path, Polygon, int]]]:
+    def scan_raw_imagery_extents(self) -> List[RasterIndexItem]:
         """
         Feature 2: Lightweight Metadata Indexing.
         Scans config.RAW_DIR for GeoTIFF files and extracts spatial bounding boxes 
         without loading heavy pixel arrays into RAM.
 
         Returns:
-            List[Dict]: List of metadata dicts containing 'path', 'crs', and 'geometry' (Polygon).
+            List[RasterIndexItem]: List of metadata dicts defining strict types for the raster index.
         """
         raw_dir = Path(config.RAW_DIR)
         raster_files = list(raw_dir.glob("*.tif")) + list(raw_dir.glob("*.tiff"))
-        index = []
+        index: List[RasterIndexItem] = []
 
         for rpath in raster_files:
             try:
@@ -121,7 +136,7 @@ class SpatialBufferEngine:
                     index.append({
                         "path": rpath,
                         "crs": str(raster_crs),
-                        "geometry": gdf_wgs84.geometry.iloc[0],
+                        "geometry": cast(Polygon, gdf_wgs84.geometry.iloc[0]),
                         "width": src.width,
                         "height": src.height,
                     })
@@ -136,7 +151,7 @@ class SpatialBufferEngine:
         lon_col: str = "longitude",
         lat_col: str = "latitude",
         buffer_meters: Optional[float] = None
-    ) -> List[Dict[str, Union[str, Path, int]]]:
+    ) -> List[ExtractionManifestItem]:
         """
         Features 3 & 5: Batch Incident Queueing and Window Calculation.
         Intersects buffered incident locations against raw imagery extents and computes 
@@ -149,7 +164,7 @@ class SpatialBufferEngine:
             buffer_meters (Optional[float]): Metric buffer distance.
 
         Returns:
-            List[Dict]: Manifest list of target pixel windows and raster paths ready for extraction.
+            List[ExtractionManifestItem]: Manifest list of target pixel windows and raster paths ready for extraction.
         """
         if incidents_df.empty:
             return []
@@ -158,7 +173,7 @@ class SpatialBufferEngine:
         if not raster_index:
             return []
 
-        extraction_manifest = []
+        extraction_manifest: List[ExtractionManifestItem] = []
 
         for idx, row in incidents_df.iterrows():
             lon, lat = row[lon_col], row[lat_col]
@@ -168,7 +183,7 @@ class SpatialBufferEngine:
             for r_info in raster_index:
                 r_poly = r_info["geometry"]
                 if buffer_poly.intersects(r_poly):
-                    r_path = Path(r_info["path"])
+                    r_path = r_info["path"]
 
                     # Compute pixel window offsets using rasterio
                     with rasterio.open(r_path) as src:
@@ -179,7 +194,7 @@ class SpatialBufferEngine:
                         # Reproject buffer polygon into native raster CRS
                         gdf_buf = gpd.GeoDataFrame(geometry=[buffer_poly], crs=self.default_crs)
                         gdf_native = gdf_buf.to_crs(raster_crs)
-                        poly_native = gdf_native.geometry.iloc[0]
+                        poly_native = cast(Polygon, gdf_native.geometry.iloc[0])
 
                         # Calculate intersecting pixel window
                         win = rasterio.features.geometry_window(src, [poly_native])

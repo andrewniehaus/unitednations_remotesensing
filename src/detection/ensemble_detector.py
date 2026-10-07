@@ -1,5 +1,3 @@
-# src/detection/ensemble_detector.py
-
 """
 Multi-Model Ensemble and Prediction Reconciler.
 
@@ -47,7 +45,7 @@ class EnsembleDetector:
         scores: torch.Tensor,
         model_ids: List[str],
     ) -> Tuple[torch.Tensor, torch.Tensor, List[int]]:
-        """
+        r"""
         Feature 1: Weighted Box Fusion (WBF).
         Blends coordinates of overlapping bounding boxes weighted by confidence scores 
         and model backbone reliability rather than suppressing lower-scoring detections.
@@ -69,7 +67,9 @@ class EnsembleDetector:
         sort_idx = torch.argsort(scores, descending=True)
         boxes = boxes[sort_idx]
         scores = scores[sort_idx]
-        model_ids = [model_ids[idx.item()] for idx in sort_idx]
+        
+        # Cast tensor item to int to resolve Pylance list indexing error
+        model_ids = [model_ids[int(idx.item())] for idx in sort_idx]
 
         weights = torch.tensor(
             [self.model_weights.get(m, 1.0) for m in model_ids],
@@ -98,15 +98,15 @@ class EnsembleDetector:
             cluster_scores = scores[matches]
             cluster_weights = weights[matches]
 
-            # Weighted combination factor: $W_i = w_i \cdot S_i$
+            # Weighted combination factor
             combined_weights = (cluster_scores * cluster_weights).unsqueeze(1)
             weight_sum = combined_weights.sum(dim=0)
 
             # Coordinate Fusion
             weighted_box = (cluster_boxes * combined_weights).sum(dim=0) / torch.clamp(weight_sum, min=1e-6)
             
-            # Consensus Scoring
-            unique_models = len(set([model_ids[m.item()] for m in matches]))
+            # Consensus Scoring. Cast tensor item to int for list indexing.
+            unique_models = len(set([model_ids[int(m.item())] for m in matches]))
             base_score = torch.max(cluster_scores)
             
             if unique_models > 1:
