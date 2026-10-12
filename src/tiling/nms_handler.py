@@ -100,7 +100,7 @@ class TiledNMSHandler:
         sigma: float = 0.5,
         method: str = "gaussian",
     ) -> torch.Tensor:
-        """
+        r"""
         Feature 2: Soft-NMS implementation for high-density object clusters.
         Decays detection scores based on overlap rather than hard deletion.
         Decay function: $S_i = S_i \exp(-\frac{\text{IoU}^2}{\sigma})$

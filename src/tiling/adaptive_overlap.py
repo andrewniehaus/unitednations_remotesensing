@@ -70,7 +70,7 @@ class AdaptiveOverlapCalculator:
     def estimate_edge_truncation_risk(
         self, box_width_px: int, box_height_px: int, current_stride: int
     ) -> float:
-        """
+        r"""
         Feature 3: Edge Truncation Risk Estimation.
         Calculates the probability $P(\text{truncation}) = \frac{\max(W, H)}{\text{Overlap}}$ 
         that an object of given pixel size will be truncated across seams.

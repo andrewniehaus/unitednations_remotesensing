@@ -167,7 +167,7 @@ Items marked ✅ were fixed on 2026-09-28 (see [Change log](#13-change-log)). Ev
 - ✅ **`georeferencing/vector_writer.py`** used `Polygon`, `Affine` and `gpd` without importing them.
 - ✅ **`environment.yml`** didn't list `scikit-learn` or `rasterstats`.
 - ✅ Runtime crashes: an invalid `offset='dr'` in `coordinate_transformer.py`; a boolean mask passed to `rasterio.features.shapes` in `mask_generator.py`; a missing `import rasterio.features` in `spatial_buffer.py`; comparing naive and timezone-aware dates in `local_archive_indexer.query_buffer`; and the `transformers` rename of `box_threshold` → `threshold` in `grounding_dino_adapter.py`.
-- ⚠️ Docstrings containing LaTeX (`\frac`, `\text`, `\alpha`) are not raw strings. The formulas display garbled, and newer Python versions give `SyntaxWarning`s. *(Still open; cosmetic.)*
+- ✅ Docstrings containing LaTeX (`\frac`, `\text`, `\alpha`) were not raw strings. The formulas displayed garbled, and Python 3.12+ gave `SyntaxWarning`s (a future version will reject them). *(Fixed 2026-10-12: made raw strings in `confidence_calibrator.py`, `zero_shot_verifier.py`, `adaptive_overlap.py` and `nms_handler.py`.)*
 - Imports are inconsistent. Most modules use `from src import config` (so they must be run from the repo root, e.g. `python -m src...`), but `init_env.py` and `create_synthetic_tiff.py` use `import config`. `src/`, `src/tiling/` and `src/Testing/` have no `__init__.py`, and the other `__init__.py` files are mostly empty.
 
 **Parts that don't fit together**
@@ -231,3 +231,7 @@ These fixes make every module compile and import (checked with Python's parser a
 - `georeferencing/coordinate_transformer.py`: `offset='dr'` → `offset='lr'`.
 - `ingestion/spatial_buffer.py`: added `import rasterio.features`.
 - `detection/batch_runner.py`: docstring now documents the adapter interface (no code change).
+
+### 2026-10-12 — Raw-string docstrings (Claude Code, for charliefp03-dg)
+
+- Five docstrings containing LaTeX were made raw strings (`"""` → `r"""`). Sequences such as `\t` (in `\text`), `\f` (in `\frac`) and `\a` (in `\alpha`) were being read as tab, form-feed and bell characters, and `\e`/`\m` gave `SyntaxWarning`s. No behaviour change. Every module in `src/` now compiles with warnings treated as errors (checked on Python 3.14).

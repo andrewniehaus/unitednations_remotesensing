@@ -68,7 +68,7 @@ class ConfidenceCalibrator:
             )
 
     def fit_platt_scaling(self, raw_scores: np.ndarray, ground_truth_labels: np.ndarray) -> None:
-        """
+        r"""
         Feature 1: Platt Scaling Logistic Calibration.
         Fits sigmoid mapping parameters ($a, b$) over validation detection logs:
         $P(Y=1|S) = \frac{1}{1 + \exp(a \cdot S + b)}$
@@ -103,7 +103,7 @@ class ConfidenceCalibrator:
         return np.round(calibrated, 4)
 
     def normalize_length_penalty(self, log_likelihood: float, token_length: int, alpha: float = 0.6) -> float:
-        """
+        r"""
         Feature 4: Length Normalization for Florence-2 Sequence Probabilities.
         Prevents long, highly detailed open-vocabulary sequence prompts from receiving 
         artificially low probability scores. Formula: $S_{\text{norm}} = \frac{LL}{L^\alpha}$

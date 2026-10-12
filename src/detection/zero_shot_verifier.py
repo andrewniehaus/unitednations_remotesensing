@@ -117,7 +117,7 @@ class ZeroShotVerifier:
         label_col: str = "label",
         score_col: str = "confidence",
     ) -> pd.DataFrame:
-        """
+        r"""
         Features 1, 4 & 5: Crop extraction, CUDA batch feature comparison, and score fusion.
 
         Formula: $S_{\text{final}} = \alpha S_{\text{vlm}} + (1 - \alpha) S_{\text{verify}}$
