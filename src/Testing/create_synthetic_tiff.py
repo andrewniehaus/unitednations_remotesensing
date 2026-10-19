@@ -1,50 +1,144 @@
-# src/testing/create_synthetic_tiff.py
-
 import sys
-import os
+import json
+from pathlib import Path
 import numpy as np
 import rasterio
-from rasterio.crs import CRS
-from rasterio.transform import from_bounds
+from rasterio.transform import from_origin
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-import config
+# Ensure project root is in python path to resolve src/config.py
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+import src.config as config
 
-def create_mock_geotiff(filename: str = "synthetic_pipeline_test.tif"):
-    """Generates a multi-band GeoTIFF designed to stress-test georeferencing and ingestion pipelines."""
-    output_path = config.RAW_DIR / filename
-    config.RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-    width, height = 2048, 2048
-    count = 3
+def inject_synthetic_objects(data: np.ndarray, transform):
+    """
+    Injects synthetic target features into a 3-band array (C, H, W) based on 0.5m GSD:
+    - Tent cluster (bright 10x10 px squares)
+    - Trench line (dark 3px-wide jagged vector line)
+    - Military compound (100x100 px outline with interior structures)
+    - Vehicles/Aircraft (small high-contrast 6x12 px rectangles)
     
-    data = np.random.randint(10, 240, size=(count, height, width), dtype=np.uint8)
-    
-    # Insert a nodata block to test blank tile skipping algorithms
-    data[:, 1536:, 1536:] = 0
+    Returns array and a list of ground truth bounding boxes.
+    """
+    ground_truth = []
 
-    # Strict geographic coordinates (EPSG:4326) mapping to Libya for georeferencing tests
-    west, south, east, north = 13.18, 32.88, 13.19, 32.89
-    transform = from_bounds(west, south, east, north, width, height)
-    crs = CRS.from_epsg(4326)
+    # 1. Tent Cluster (3 tents, 10x10 px each at 0.5m GSD = 5m x 5m)
+    tent_coords = [(800, 800), (800, 825), (825, 800)]
+    for idx, (r, c) in enumerate(tent_coords):
+        # Bright canvas with dark shadow edge
+        data[:, r:r+10, c:c+10] = np.array([210, 205, 190], dtype=np.uint8)[:, None, None]
+        data[:, r+9:r+10, c:c+10] = 30  # Shadow line
+        
+        # Ground truth tracking [ymin, xmin, ymax, xmax] in pixel space
+        ground_truth.append({
+            "id": f"tent_{idx+1}",
+            "label": "military tent",
+            "pixel_bbox": [r, c, r+10, c+10]
+        })
+
+    # 2. Trench Line (Zig-zagging dark line, 3px wide)
+    trench_points = [(1500, 1200), (1550, 1280), (1520, 1350), (1600, 1450)]
+    for i in range(len(trench_points) - 1):
+        r0, c0 = trench_points[i]
+        r1, c1 = trench_points[i+1]
+        num_steps = max(abs(r1 - r0), abs(c1 - c0))
+        r_steps = np.linspace(r0, r1, num_steps, dtype=int)
+        c_steps = np.linspace(c0, c1, num_steps, dtype=int)
+        for r, c in zip(r_steps, c_steps):
+            data[:, max(0, r-1):r+2, max(0, c-1):c+2] = 25  # Dark excavated line
+            
+    ground_truth.append({
+        "id": "trench_1",
+        "label": "trench line",
+        "pixel_bbox": [1500, 1200, 1600, 1450]
+    })
+
+    # 3. Military Compound (100x100 px = 50m x 50m compound wall + internal buildings)
+    cr, cc = 2500, 2500
+    # Perimeter Wall (3px thick, bright concrete)
+    data[:, cr:cr+100, cc:cc+3] = 190
+    data[:, cr:cr+100, cc+97:cc+100] = 190
+    data[:, cr:cr+3, cc:cc+100] = 190
+    data[:, cr+97:cr+100, cc:cc+100] = 190
+    
+    # Internal structures (Two 20x20 px buildings inside compound)
+    data[:, cr+15:cr+35, cc+15:cc+35] = np.array([160, 150, 140], dtype=np.uint8)[:, None, None]
+    data[:, cr+50:cr+70, cc+50:cc+70] = np.array([160, 150, 140], dtype=np.uint8)[:, None, None]
+    
+    ground_truth.append({
+        "id": "compound_1",
+        "label": "military compound",
+        "pixel_bbox": [cr, cc, cr+100, cc+100]
+    })
+
+    # 4. Vehicles (Two 6x12 px high-contrast rectangles near compound)
+    vehicle_coords = [(2620, 2510), (2620, 2530)]
+    for idx, (r, c) in enumerate(vehicle_coords):
+        data[:, r:r+6, c:c+12] = np.array([230, 230, 240], dtype=np.uint8)[:, None, None]
+        ground_truth.append({
+            "id": f"vehicle_{idx+1}",
+            "label": "vehicle",
+            "pixel_bbox": [r, c, r+6, c+12]
+        })
+
+    # Convert pixel bboxes to UTM geospatial bounding coordinates using Affine transform
+    for gt in ground_truth:
+        ymin, xmin, ymax, xmax = gt["pixel_bbox"]
+        ul_x, ul_y = transform * (xmin, ymin)
+        lr_x, lr_y = transform * (xmax, ymax)
+        gt["geo_bbox_utm"] = [ul_x, ul_y, lr_x, lr_y]
+
+    return data, ground_truth
+
+
+def create_synthetic_tiff(
+    output_filename: str = "synthetic_vantor_targets.tif",
+    gt_filename: str = "synthetic_ground_truth.json",
+    width: int = 4000,
+    height: int = 4000,
+):
+    """Generates synthetic GeoTIFF with embedded targets and exports ground truth metadata."""
+    output_path = config.RAW_DIR / output_filename
+    gt_path = config.RAW_DIR / gt_filename
+
+    # GeoTransform: 0.5m GSD in UTM Zone 36N (EPSG:32636)
+    transform = from_origin(500000.0, 5300000.0, 0.5, 0.5)
 
     profile = {
         "driver": "GTiff",
-        "dtype": "uint8",
-        "nodata": 0,
-        "width": width,
         "height": height,
-        "count": count,
-        "crs": crs,
+        "width": width,
+        "count": 3,
+        "dtype": "uint8",
+        "crs": "EPSG:32636",
         "transform": transform,
-        "compress": "lzw",
-        "blockxsize": config.DEFAULT_TILE_SIZE,
-        "blockysize": config.DEFAULT_TILE_SIZE,
+        "nodata": 0,
         "tiled": True,
+        "blockxsize": 256,
+        "blockysize": 256,
+        "compress": "lzw",
     }
 
+    print(f"Generating base synthetic array ({width}x{height})...")
+    # Base terrain background noise
+    data = np.random.randint(60, 140, size=(3, height, width), dtype=np.uint8)
+
+    print("Injecting fake objects (tents, trench lines, compounds, vehicles)...")
+    data, ground_truth = inject_synthetic_objects(data, transform)
+
+    print(f"Writing synthetic GeoTIFF to {output_path}...")
     with rasterio.open(output_path, "w", **profile) as dst:
         dst.write(data)
+        dst.set_band_description(1, "Red")
+        dst.set_band_description(2, "Green")
+        dst.set_band_description(3, "Blue")
+
+    print(f"Saving ground truth bounding boxes to {gt_path}...")
+    with open(gt_path, "w") as f:
+        json.dump(ground_truth, f, indent=4)
+
+    print("Synthetic imagery and ground truth generation complete.")
+
 
 if __name__ == "__main__":
-    create_mock_geotiff()
+    create_synthetic_tiff()
