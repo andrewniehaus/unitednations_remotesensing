@@ -3,6 +3,7 @@ import concurrent.futures
 import json
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
+from rasterio.io import DatasetReader
 
 import numpy as np
 import rasterio
@@ -40,7 +41,7 @@ class RasterChipper:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def get_tile_windows(
-        self, src: rasterio.io.DatasetReader
+        self, src: DatasetReader  # <--- Change from rasterio.io.DatasetReader to DatasetReader
     ) -> Generator[Tuple[int, int, Window], None, None]:
         """Yields native block windows directly from the GeoTIFF for optimized I/O.
 
@@ -260,3 +261,17 @@ class RasterChipper:
                     tile_records.append(future.result())
 
             return self.generate_manifest(tile_records, input_path, src.crs)
+
+if __name__ == "__main__":
+    from pathlib import Path
+    from src import config
+    
+    chipper = RasterChipper()
+    test_image_path = Path(config.RAW_DIR) / "synthetic_vantor_sample.tif"
+    
+    if test_image_path.exists():
+        print(f"Starting chipping process for {test_image_path.name}...")
+        manifest_path = chipper.chip_raster(test_image_path)
+        print(f"Tiling complete. Manifest saved at: {manifest_path}")
+    else:
+        print(f"Error: Source image not found at {test_image_path}")
