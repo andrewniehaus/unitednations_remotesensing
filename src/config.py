@@ -57,3 +57,35 @@ DEFAULT_FILL_VALUE = 0             # Pad/NoData value for written tiles (constan
 MANIFEST_FILENAME = "tile_manifest.json"  # Chipper manifest written to INTERIM_DIR
 TILE_NAMING_SCHEMA = "{source_name}_r{row}_c{col}.tif"  # Tile filename template used by chipper
 DEFAULT_OVERWRITE = False  # If False, existing tiles / inference JSONs are skipped (resumable runs)
+
+# -----------------------------------------------------------------------------
+# Target Prompt Profiles (Open-Vocabulary Detection)
+# -----------------------------------------------------------------------------
+TARGET_PROMPTS = {
+    "disaster_response": [
+        "damaged building",
+        "destroyed roof",
+        "rubble pile",
+        "emergency tent",
+        "makeshift shelter",
+        "flooded road",
+    ],
+    "military_infrastructure": [
+        "military vehicle",
+        "guard tower",
+        "trenchline",
+        "bunker",
+        "helipad",
+        "fortified position",
+        "military tent",
+    ],
+    "aviation_assets": [
+        "helicopter",
+        "cargo plane",
+        "fighter jet",
+        "aircraft hangar",
+    ],
+}
+
+# Default prompt set for generic execution
+DEFAULT_TARGETS = TARGET_PROMPTS["disaster_response"]
