@@ -1,0 +1,6 @@
+2026-11-02 10:16:24,462 [INFO] __main__: Loaded target profile 'disaster_response': ['damaged building', 'destroyed roof', 'rubble pile', 'emergency tent', 'makeshift shelter', 'flooded road']
+2026-11-02 10:16:33,304 [INFO] __main__: Initializing Florence-2 Adapter on cpu...
+2026-11-02 10:16:33,304 [CRITICAL] __main__: Failed to initialize model architecture: Florence2Adapter.__init__() got an unexpected keyword argument 'model_path'
+2026-11-02 10:25:07,855 [INFO] __main__: Loaded target profile 'disaster_response': ['damaged building', 'destroyed roof', 'rubble pile', 'emergency tent', 'makeshift shelter', 'flooded road']
+2026-11-02 10:25:17,753 [INFO] __main__: Initializing Florence-2 Adapter on cpu...
+2026-11-02 10:25:17,857 [CRITICAL] __main__: Failed to initialize model architecture: 'Florence2LanguageConfig' object has no attribute 'forced_bos_token_id'

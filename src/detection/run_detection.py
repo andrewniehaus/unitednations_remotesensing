@@ -19,7 +19,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(config.BASE_DIR / "detection_run.log", mode="a")
+        logging.FileHandler(config.PROJECT_ROOT / "detection_run.log", mode="a")
     ]
 )
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ def load_adapter(model_choice: str):
         try:
             from src.detection.florence2_adapter import Florence2Adapter
             logger.info(f"Initializing Florence-2 Adapter on {config.DEVICE}...")
-            return Florence2Adapter(model_path=config.FLORENCE2_DIR, device=config.DEVICE, dtype=config.TORCH_DTYPE)
+            return Florence2Adapter(model_dir=config.FLORENCE2_DIR)
         except ImportError as e:
             logger.critical(f"Failed to import Florence2Adapter. Ensure src/detection/florence2_adapter.py exists. Error: {e}")
             sys.exit(1)
