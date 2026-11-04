@@ -5,6 +5,9 @@ channels:
 dependencies:
   # Python Core Runtime
   - python=3.10
+  - pip
+
+
 
   # System & Geospatial Core Drivers
   # (Removed redundant libgdal, proj, geos to prevent version mismatches)
@@ -27,6 +30,7 @@ dependencies:
   - urllib3
   - pyyaml
   - matplotlib
+
   # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Added missing dependencies:
   # scikit-learn (detection/hard_negative_miner.py) and rasterstats (ingestion/spatial_overlay.py).
   - scikit-learn
@@ -47,8 +51,8 @@ dependencies:
       - torchaudio
 
       # Vision-Language Models & Transformer Frameworks
-      - transformers>=4.38.0
+      - transformers==4.38.0
       - huggingface_hub
       - accelerate>=0.26.0
       - timm>=0.9.0
-      - einops
+      - einops   

@@ -9,9 +9,11 @@ import logging
 import sys
 import traceback
 from pathlib import Path
+from types import ModuleType
 
 from src import config
 from src.detection.batch_runner import BatchInferenceRunner
+
 
 # Configure logging for robust debugging
 logging.basicConfig(
