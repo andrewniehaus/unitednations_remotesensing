@@ -2846,3 +2846,6 @@
 2026-11-04 17:47:43,531 [INFO] __main__: Loaded target profile 'disaster_response': ['damaged building', 'destroyed roof', 'rubble pile', 'emergency tent', 'makeshift shelter', 'flooded road']
 2026-11-04 17:47:44,319 [INFO] __main__: Initializing Florence-2 Adapter on cpu...
 2026-11-04 17:47:46,020 [CRITICAL] __main__: Failed to import Florence2Adapter. Ensure src/detection/florence2_adapter.py exists. Error: This modeling file requires the following packages that were not found in your environment: flash_attn. Run `pip install flash_attn`
+2026-11-06 09:39:31,361 [INFO] __main__: Loaded target profile 'disaster_response': ['damaged building', 'destroyed roof', 'rubble pile', 'emergency tent', 'makeshift shelter', 'flooded road']
+2026-11-06 09:39:44,647 [INFO] __main__: Initializing Florence-2 Adapter on cpu...
+2026-11-06 09:40:00,951 [CRITICAL] __main__: Failed to import Florence2Adapter. Ensure src/detection/florence2_adapter.py exists. Error: This modeling file requires the following packages that were not found in your environment: flash_attn. Run `pip install flash_attn`
