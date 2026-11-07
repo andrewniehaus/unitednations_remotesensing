@@ -10,14 +10,29 @@ weights from config.MODELS_DIR / "florence2" and executes multi-task prompt quer
 
 from pathlib import Path
 from typing import Dict, List, Union, Optional, Any
+from unittest.mock import patch
 import torch
 import numpy as np
 import pandas as pd
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForCausalLM
+from transformers.dynamic_module_utils import get_imports
 
 # Dynamic Configuration Import (Air-Gapped Workstation Standard)
 from src import config
+
+
+def _get_imports_without_flash_attn(filename: Union[str, Path]) -> List[str]:
+    """
+    Florence-2's bundled modeling_florence2.py imports flash_attn only when it is
+    installed, but transformers' pre-load check treats it as a hard requirement.
+    flash_attn needs an NVIDIA GPU and is hard to build on Windows, so drop it from
+    the check for that file; the model then uses standard attention.
+    """
+    imports = get_imports(filename)
+    if str(filename).endswith("modeling_florence2.py") and "flash_attn" in imports:
+        imports.remove("flash_attn")
+    return imports
 
 
 class Florence2Adapter:
@@ -42,12 +57,15 @@ class Florence2Adapter:
             local_files_only=True,
             trust_remote_code=True
         )
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_dir,
-            torch_dtype=self.torch_dtype,
-            local_files_only=True,
-            trust_remote_code=True
-        ).to(self.device)
+        # Load without requiring flash_attn; "eager" attention runs on any CPU/GPU
+        with patch("transformers.dynamic_module_utils.get_imports", _get_imports_without_flash_attn):
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_dir,
+                torch_dtype=self.torch_dtype,
+                local_files_only=True,
+                trust_remote_code=True,
+                attn_implementation="eager"
+            ).to(self.device)
 
         self.model.eval()
 

@@ -9,7 +9,6 @@ import logging
 import sys
 import traceback
 from pathlib import Path
-from types import ModuleType
 
 from src import config
 from src.detection.batch_runner import BatchInferenceRunner
@@ -45,14 +44,15 @@ def load_adapter(model_choice: str):
             sys.exit(1)
 
     elif model_choice.lower() == "groundingdino":
-        if not config.GROUNDINGDINO_DIR.exists() or not any(config.GROUNDINGDINO_DIR.iterdir()):
-            logger.critical(f"Grounding DINO model weights missing in {config.GROUNDINGDINO_DIR}.")
+        if not config.GROUNDING_DINO_DIR.exists() or not any(config.GROUNDING_DINO_DIR.iterdir()):
+            logger.critical(f"Grounding DINO model weights missing in {config.GROUNDING_DINO_DIR}.")
             sys.exit(1)
-        
+
         try:
-            from src.detection.groundingdino_adapter import GroundingDINOAdapter
+            from src.detection.grounding_dino_adapter import GroundingDINOAdapter
             logger.info(f"Initializing Grounding DINO Adapter on {config.DEVICE}...")
-            return GroundingDINOAdapter(model_path=config.GROUNDINGDINO_DIR, device=config.DEVICE, dtype=config.TORCH_DTYPE)
+            # Adapter reads device/dtype from config and resolves the folder inside models/
+            return GroundingDINOAdapter(model_directory_name=config.GROUNDING_DINO_DIR.name)
         except ImportError as e:
             logger.critical(f"Failed to import GroundingDINOAdapter. Error: {e}")
             sys.exit(1)
