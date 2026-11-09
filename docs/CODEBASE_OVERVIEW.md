@@ -171,7 +171,7 @@ Items marked ✅ were fixed on 2026-09-28 (see [Change log](#13-change-log)). Ev
 - Imports are inconsistent. Most modules use `from src import config` (so they must be run from the repo root, e.g. `python -m src...`), but `init_env.py` and `create_synthetic_tiff.py` use `import config`. `src/`, `src/tiling/` and `src/Testing/` have no `__init__.py`, and the other `__init__.py` files are mostly empty.
 
 **Parts that don't fit together**
-- **Two manifest formats.** `chipper.py` writes a dict with a `tiles` list keyed by `filename`/`window`/`padding`/`transform`. `parallel_chipper.py` writes a plain list keyed by `tile_path`/`bounds`. `batch_runner`, `rebuilder` and `vector_writer` only understand the `chipper.py` format. Also, `chipper.py` tiles by the GeoTIFF's internal blocks, so its tiles **don't overlap** and ignore `DEFAULT_STRIDE`.
+- **Two manifest formats.** `chipper.py` writes a dict with a `tiles` list keyed by `filename`/`window`/`padding`/`transform`. `parallel_chipper.py` writes a plain list keyed by `tile_path`/`bounds`. `batch_runner`, `rebuilder` and `vector_writer` only understand the `chipper.py` format.
 - ✅ **The adapters had different interfaces.** `batch_runner` calls `adapter.predict(image_data=..., targets=...)`, and only `GroundingDINOAdapter` matched that. `Florence2Adapter` and `LocalVLMWrapper` now match it too.
 - ⚠️ `LocalVLMWrapper` and `PromptManager.format_for_florence2` default to the task token `<CAPTION_TO_PHRASE>`. Florence-2's actual phrase-grounding token is `<CAPTION_TO_PHRASE_GROUNDING>`, so this should be checked against the model version you use. *(Still open.)*
 - **Two `CoordinateTransformer` classes** with the same name and different APIs live in the same package.
@@ -235,3 +235,8 @@ These fixes make every module compile and import (checked with Python's parser a
 ### 2026-10-12 — Raw-string docstrings (Claude Code, for charliefp03-dg)
 
 - Five docstrings containing LaTeX were made raw strings (`"""` → `r"""`). Sequences such as `\t` (in `\text`), `\f` (in `\frac`) and `\a` (in `\alpha`) were being read as tab, form-feed and bell characters, and `\e`/`\m` gave `SyntaxWarning`s. No behaviour change. Every module in `src/` now compiles with warnings treated as errors (checked on Python 3.14).
+
+### 2026-11-09 — Chipper windows and Florence-2 output (Claude Code, for charliefp03-dg)
+
+- `tiling/chipper.py`: tiles are now `DEFAULT_TILE_SIZE` windows stepped by `DEFAULT_STRIDE`, with the last row/column flush to the raster edge. They previously followed the GeoTIFF's internal blocks, which left 256 px blocks 75 % black after padding to 512 px. **Tiles from older runs must be deleted before re-chipping the same raster**, because existing filenames are skipped unless `DEFAULT_OVERWRITE = True`.
+- `detection/florence2_adapter.py`: `predict()` now queries each target separately (one model call per target per tile) and labels detections with that target. Labels from `<OPEN_VOCABULARY_DETECTION>` are read from `bboxes_labels`; previously all its detections were dropped.

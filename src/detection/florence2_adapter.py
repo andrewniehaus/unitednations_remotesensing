@@ -139,7 +139,8 @@ class Florence2Adapter:
         if task_prompt in parsed_data:
             data = parsed_data[task_prompt]
             bboxes = data.get("bboxes", [])
-            labels = data.get("labels", [])
+            # <OD> returns "labels"; <OPEN_VOCABULARY_DETECTION> returns "bboxes_labels"
+            labels = data.get("labels", data.get("bboxes_labels", []))
 
             for bbox, label in zip(bboxes, labels):
                 # Florence-2 box format: [xmin, ymin, xmax, ymax]
@@ -223,19 +224,23 @@ class Florence2Adapter:
 
         target_list = [targets] if isinstance(targets, str) else list(targets)
         prompt_manager = PromptManager()
-        text_input = " . ".join(
-            prompt_manager.get_target(t)["primary_prompt"] for t in target_list
-        )
 
-        df = self.predict_tile(
-            image_input=image_data, task_prompt=task_prompt, text_input=text_input
-        )
+        # Florence-2 treats a joined prompt as one phrase, so query each target separately
+        # and label detections with the target that produced them.
+        detections = []
+        for target in target_list:
+            df = self.predict_tile(
+                image_input=image_data,
+                task_prompt=task_prompt,
+                text_input=prompt_manager.get_target(target)["primary_prompt"],
+            )
+            detections.extend(
+                {
+                    "bbox": [row.xmin, row.ymin, row.xmax, row.ymax],
+                    "label": target,
+                    "confidence": row.confidence,
+                }
+                for row in df.itertuples(index=False)
+            )
 
-        return [
-            {
-                "bbox": [row.xmin, row.ymin, row.xmax, row.ymax],
-                "label": row.label,
-                "confidence": row.confidence,
-            }
-            for row in df.itertuples(index=False)
-        ]
+        return detections

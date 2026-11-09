@@ -27,9 +27,11 @@ class RasterChipper:
         fill_value: Union[int, float] = config.DEFAULT_FILL_VALUE,
         output_dir: Optional[Path] = None,
         manifest_filename: str = config.MANIFEST_FILENAME,
+        stride: int = config.DEFAULT_STRIDE,
     ):
         """Initializes the chipper with spatial parameters and output locations."""
         self.tile_size = tile_size
+        self.stride = stride
         self.padding_mode = padding_mode
         self.fill_value = fill_value
         self.output_dir = Path(output_dir) if output_dir else config.INTERIM_DIR
@@ -43,13 +45,31 @@ class RasterChipper:
     def get_tile_windows(
         self, src: DatasetReader  # <--- Change from rasterio.io.DatasetReader to DatasetReader
     ) -> Generator[Tuple[int, int, Window], None, None]:
-        """Yields native block windows directly from the GeoTIFF for optimized I/O.
+        """Yields overlapping tile_size windows stepped by stride across the raster.
+
+        Windows are independent of the GeoTIFF's internal block layout, so tiles are
+        only padded when the raster itself is smaller than tile_size.
 
         Yields:
             Tuple of (row_index, col_index, rasterio.windows.Window)
         """
-        for (row_idx, col_idx), window in src.block_windows(1):
-            yield row_idx, col_idx, window
+        for row_idx, row_off in enumerate(self._grid_offsets(src.height)):
+            for col_idx, col_off in enumerate(self._grid_offsets(src.width)):
+                window = Window(
+                    col_off,
+                    row_off,
+                    min(self.tile_size, src.width - col_off),
+                    min(self.tile_size, src.height - row_off),
+                )
+                yield row_idx, col_idx, window
+
+    def _grid_offsets(self, length: int) -> List[int]:
+        """Returns tile start offsets along one axis, with the last tile flush to the raster edge."""
+        last_offset = max(length - self.tile_size, 0)
+        offsets = list(range(0, last_offset + 1, self.stride))
+        if offsets[-1] != last_offset:
+            offsets.append(last_offset)
+        return offsets
 
     def calculate_tile_transform(
         self, src_transform: Affine, window: Window
