@@ -11,6 +11,9 @@ venv/
 __pycache__/
 *.pyc
 
+# Run Logs
+detection_run.log
+
 # OS Generated Files
 .DS_Store
 Thumbs.db

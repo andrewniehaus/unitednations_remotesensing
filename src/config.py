@@ -57,7 +57,7 @@ DEFAULT_PADDING_MODE = "constant"  # np.pad mode for partial edge tiles ('consta
 DEFAULT_FILL_VALUE = 0             # Pad/NoData value for written tiles (constant padding mode)
 MANIFEST_FILENAME = "tile_manifest.json"  # Chipper manifest written to INTERIM_DIR
 TILE_NAMING_SCHEMA = "{source_name}_r{row}_c{col}.tif"  # Tile filename template used by chipper
-DEFAULT_OVERWRITE = False  # If False, existing tiles / inference JSONs are skipped (resumable runs)
+DEFAULT_OVERWRITE = False  # If False, existing inference JSONs are skipped (resumable runs); re-chipping always replaces tiles
 
 # -----------------------------------------------------------------------------
 # Target Prompt Profiles (Open-Vocabulary Detection)

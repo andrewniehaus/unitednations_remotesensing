@@ -1,5 +1,6 @@
 import concurrent.futures
 
+import glob
 import json
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
@@ -132,9 +133,6 @@ class RasterChipper:
         )
         tile_path = self.output_dir / tile_filename
 
-        if tile_path.exists() and not config.DEFAULT_OVERWRITE:
-            return tile_path
-
         bands, height, width = tile_data.shape
 
         profile = {
@@ -242,6 +240,16 @@ class RasterChipper:
 
     # [EDIT 2026-09-28 | Claude Code for charliefp03-dg] Fixed syntax error: removed stray "4"
     # after the return annotation and re-indented the docstring/body into the method.
+    def _clear_previous_run(self, source_stem: str) -> None:
+        """Removes this raster's earlier tiles and VLM results so they can't mix with the new grid."""
+        tile_pattern = config.TILE_NAMING_SCHEMA.format(
+            source_name=glob.escape(source_stem), row="*", col="*"
+        )
+        stale_files = list(self.output_dir.glob(tile_pattern))
+        stale_files += (self.output_dir / "vlm_results").glob(str(Path(tile_pattern).with_suffix(".json")))
+        for stale_file in stale_files:
+            stale_file.unlink()
+
     def chip_raster(self, input_path: Path) -> Path:
         """Executes the complete tiling workflow for a single input raster using concurrent I/O.
 
@@ -254,6 +262,7 @@ class RasterChipper:
         tile_records = []
         source_stem = input_path.stem
         futures = []
+        self._clear_previous_run(source_stem)
 
         with rasterio.open(input_path) as src:
             nodata_val = src.nodata if src.nodata is not None else self.fill_value
@@ -287,7 +296,7 @@ if __name__ == "__main__":
     from src import config
     
     chipper = RasterChipper()
-    test_image_path = Path(config.RAW_DIR) / "synthetic_vantor_sample.tif"
+    test_image_path = Path(config.RAW_DIR) / "synthetic_vantor_targets.tif"
     
     if test_image_path.exists():
         print(f"Starting chipping process for {test_image_path.name}...")

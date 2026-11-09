@@ -238,5 +238,12 @@ These fixes make every module compile and import (checked with Python's parser a
 
 ### 2026-11-09 — Chipper windows and Florence-2 output (Claude Code, for charliefp03-dg)
 
-- `tiling/chipper.py`: tiles are now `DEFAULT_TILE_SIZE` windows stepped by `DEFAULT_STRIDE`, with the last row/column flush to the raster edge. They previously followed the GeoTIFF's internal blocks, which left 256 px blocks 75 % black after padding to 512 px. **Tiles from older runs must be deleted before re-chipping the same raster**, because existing filenames are skipped unless `DEFAULT_OVERWRITE = True`.
+- `tiling/chipper.py`: tiles are now `DEFAULT_TILE_SIZE` windows stepped by `DEFAULT_STRIDE`, with the last row/column flush to the raster edge. They previously followed the GeoTIFF's internal blocks, which left 256 px blocks 75 % black after padding to 512 px.
 - `detection/florence2_adapter.py`: `predict()` now queries each target separately (one model call per target per tile) and labels detections with that target. Labels from `<OPEN_VOCABULARY_DETECTION>` are read from `bboxes_labels`; previously all its detections were dropped.
+
+### 2026-11-09 — One-command runs (Claude Code, for charliefp03-dg)
+
+- **New `src/run_pipeline.py`:** `python -m src.run_pipeline --input <raster> --profile <profile>` chips one raster, filters tiles, runs the VLM and writes `data/processed/<raster>_detections.gpkg`. `--ground-truth` adds scoring, `--max-tiles` limits a test run and `--skip-chip` resumes. The refinement modules (post-processing, ensembling, calibration, verification, spatial rules) are not called yet.
+- `tiling/chipper.py`: re-chipping a raster now replaces its tiles and first removes that raster's earlier tiles and `vlm_results` JSONs, so old content can't be paired with a new manifest.
+- `environment.yml`: pinned `gdal=3.10`, `rasterio=1.4`, `geopandas=1.0`, `pyproj=3.7` and `shapely=2.0` to avoid a conda solver stall.
+- `detection_run.log` is no longer tracked by git. Pulling this change deletes the tracked copy; run `git restore detection_run.log` first if the pull reports local changes to it.
