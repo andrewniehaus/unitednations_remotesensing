@@ -296,7 +296,7 @@ if __name__ == "__main__":
     from src import config
     
     chipper = RasterChipper()
-    test_image_path = Path(config.RAW_DIR) / "synthetic_vantor_targets.tif"
+    test_image_path = Path(config.ACTIVE_INPUT_IMAGE)
     
     if test_image_path.exists():
         print(f"Starting chipping process for {test_image_path.name}...")

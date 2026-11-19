@@ -26,6 +26,30 @@ FLORENCE2_DIR = MODELS_DIR / "florence2"
 GROUNDING_DINO_DIR = MODELS_DIR / "groundingdino"
 CLAY_DIR = MODELS_DIR / "clayfoundation"
 
+from pathlib import Path
+from typing import Optional
+
+def get_active_raw_image(raw_dir: Path) -> Optional[Path]:
+    """
+    Scans RAW_DIR for GeoTIFF files (.tif, .tiff), ignoring sidecar metadata.
+    Returns the most recently modified image if multiple exist, or None if empty.
+    """
+    valid_extensions = {".tif", ".tiff"}
+    tif_files = [
+        f for f in raw_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in valid_extensions
+    ]
+    
+    if not tif_files:
+        return None
+        
+    # Sort by modification time descending so the newest drop is always selected
+    tif_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    return tif_files[0]
+
+# Dynamically resolved active input image
+ACTIVE_INPUT_IMAGE: Optional[Path] = get_active_raw_image(RAW_DIR)
+
 # Ensure runtime directories exist upon module load
 for directory in [RAW_DIR, INTERIM_DIR, PROCESSED_DIR, FLORENCE2_DIR, GROUNDING_DINO_DIR, CLAY_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
@@ -64,27 +88,7 @@ DEFAULT_OVERWRITE = False  # If False, existing inference JSONs are skipped (res
 # -----------------------------------------------------------------------------
 TARGET_PROMPTS = {
     "disaster_response": [
-        "damaged building",
-        "destroyed roof",
-        "rubble pile",
-        "emergency tent",
-        "makeshift shelter",
-        "flooded road",
-    ],
-    "military_infrastructure": [
-        "military vehicle",
-        "guard tower",
-        "trenchline",
-        "bunker",
-        "helipad",
-        "fortified position",
-        "military tent",
-    ],
-    "aviation_assets": [
-        "helicopter",
-        "cargo plane",
-        "fighter jet",
-        "aircraft hangar",
+        "building",
     ],
 }
 
