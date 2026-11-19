@@ -107,7 +107,7 @@ class Florence2Adapter:
                 pixel_values=inputs["pixel_values"],
                 max_new_tokens=1024,
                 num_beams=3,
-                early_stopping=True,
+                early_stopping=True,    
                 output_scores=True,
                 return_dict_in_generate=True,
             )
