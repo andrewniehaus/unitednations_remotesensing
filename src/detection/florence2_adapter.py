@@ -150,12 +150,12 @@ class Florence2Adapter:
                 ymax = float(bbox[3]) + y_offset
 
                 records.append({
-                    "xmin": xmin,
-                    "ymin": ymin,
-                    "xmax": xmax,
-                    "ymax": ymax,
-                    "label": str(label).strip(),
-                    "confidence": 0.85,  # Baseline score placeholder for generation outputs
+                    # "xmin": xmin,
+                    # "ymin": ymin,
+                    # "xmax": xmax,
+                    # "ymax": ymax,
+                    # "label": str(label).strip(),
+                    # "confidence": 0.85,  # Baseline score placeholder for generation outputs
                 })
 
         # Feature 4: Clear VRAM cache after execution
