@@ -67,8 +67,8 @@ TORCH_DTYPE = torch.bfloat16 if torch.cuda.is_available() else torch.float32
 # -----------------------------------------------------------------------------
 # 3. GLOBAL TILING DEFAULTS
 # -----------------------------------------------------------------------------
-DEFAULT_TILE_SIZE = 512  # Pixel height/width for image patches
-DEFAULT_STRIDE = 384     # Pixel step size (512 size with 384 stride gives 128px overlap)
+DEFAULT_TILE_SIZE = 768  # Pixel height/width for image patches; matches Florence-2's 768 x 768 input (was 512, see docs/performance_baseline.md)
+DEFAULT_STRIDE = 576     # Pixel step size (768 size with 576 stride gives 192px overlap, 25 %)
 DEFAULT_CRS = "EPSG:4326"  # Fallback spatial reference system
 
 # Array Normalization Parameters
@@ -81,6 +81,7 @@ DEFAULT_PADDING_MODE = "constant"  # np.pad mode for partial edge tiles ('consta
 DEFAULT_FILL_VALUE = 0             # Pad/NoData value for written tiles (constant padding mode)
 FLORENCE2_NUM_BEAMS = 3            # Beam search width; 1 is faster (see docs/performance_baseline.md)
 FLORENCE2_BATCH_SIZE = 1           # Chips per Florence-2 model call (same target prompt per call)
+MAX_BOX_CHIP_FRACTION = 0.9        # run_pipeline drops boxes covering more of their chip than this (whole-chip outlines)
 MIN_CHIP_VALID_FRACTION = 0.05     # Chipper skips windows with less valid (non-NoData) area than this; SpatialTileFilter makes the stricter keep/drop decision
 MANIFEST_FILENAME = "tile_manifest.json"  # Chipper manifest written to INTERIM_DIR
 TILE_NAMING_SCHEMA = "{source_name}_r{row}_c{col}.tif"  # Tile filename template used by chipper

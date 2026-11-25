@@ -147,6 +147,34 @@ class PromptManager:
             "text_threshold": 0.25,
         }
 
+    def match_target(self, label: str) -> Optional[str]:
+        """
+        Maps a free-text label (e.g. 'military tent', 'vehicle') to its catalogue key.
+
+        Tries, in order: the key itself; an exact prompt or synonym phrase; the key's singular
+        name inside the label ('tent' in 'military tent'); the label inside a phrase
+        ('vehicle' in 'military vehicle'). Returns None if nothing matches.
+        """
+        text = label.lower().strip().replace("_", " ")
+        if text.replace(" ", "_") in self.catalog:
+            return text.replace(" ", "_")
+
+        phrases = {
+            key: [p.strip().lower() for p in info.get("primary_prompt", "").split(",")]
+            + [s.lower() for s in info.get("synonyms", [])]
+            for key, info in self.catalog.items()
+        }
+        for key, key_phrases in phrases.items():
+            if text in key_phrases:
+                return key
+        for key in self.catalog:
+            if key.replace("_", " ").rstrip("s") in text:
+                return key
+        for key, key_phrases in phrases.items():
+            if any(text in phrase for phrase in key_phrases):
+                return key
+        return None
+
     def format_for_florence2(
         self,
         target_query: str,

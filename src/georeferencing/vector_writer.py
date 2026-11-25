@@ -30,17 +30,38 @@ class VectorWriter:
         with open(self.manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
 
+        # Raster extent, used to tell chip edges inside the scene from the scene's own border
+        windows = [tile["window"] for tile in manifest["tiles"] if "window" in tile]
+        self.raster_width = max((w["col_off"] + w["width"] for w in windows), default=None)
+        self.raster_height = max((w["row_off"] + w["height"] for w in windows), default=None)
+
         # Create a fast O(1) lookup dictionary keyed by tile filename
         metadata_lookup = {
             tile["filename"]: {
                 "transform": tile["transform"],
                 "crs": manifest["crs"],
-                "source_raster": manifest["source_raster"]
+                "source_raster": manifest["source_raster"],
+                "window": tile.get("window"),
             }
             for tile in manifest["tiles"]
         }
-        
+
         return metadata_lookup
+
+    def _touches_inner_edge(self, bbox: List[float], window: Dict[str, Any], margin: float = 4.0) -> bool:
+        """
+        True if the box touches a chip edge that lies inside the scene, i.e. the object
+        may be cut off here and appear whole in the neighbouring, overlapping chip.
+        """
+        if not window or self.raster_width is None:
+            return False
+        x_min, y_min, x_max, y_max = bbox
+        return (
+            (window["col_off"] > 0 and x_min <= margin)
+            or (window["row_off"] > 0 and y_min <= margin)
+            or (window["col_off"] + window["width"] < self.raster_width and x_max >= window["width"] - margin)
+            or (window["row_off"] + window["height"] < self.raster_height and y_max >= window["height"] - margin)
+        )
 
     def parse_inference_outputs(
         self, 
@@ -64,11 +85,12 @@ class VectorWriter:
             parsed_detections.append({
                 "tile_filename": tile_filename,
                 "source_raster": tile_spatial_data["source_raster"],
-                "local_bbox": bbox, # [x_min, y_min, x_max, y_max] relative to the 256x256 chip
+                "local_bbox": bbox, # [x_min, y_min, x_max, y_max] in chip pixel coordinates
                 "label": label,
                 "confidence": score,
                 "transform": tile_spatial_data["transform"],
-                "crs": tile_spatial_data["crs"]
+                "crs": tile_spatial_data["crs"],
+                "touches_inner_edge": self._touches_inner_edge(bbox, tile_spatial_data["window"]),
             })
 
         return parsed_detections
@@ -113,51 +135,78 @@ class VectorWriter:
         return geom
 
     def _apply_spatial_nms(
-        self, features: List[Dict[str, Any]], iou_threshold: float = 0.4
+        self,
+        features: List[Dict[str, Any]],
+        iou_threshold: float = 0.4,
+        containment_threshold: float = 0.7,
+        edge_penalty: float = 0.7,
     ) -> List[Dict[str, Any]]:
         """
-        Addition 1: Geospatial Non-Maximum Suppression (NMS).
-        Resolves duplicate overlapping geometries generated on tile boundaries 
-        due to the inference stride parameter.
+        Addition 1: Geospatial Non-Maximum Suppression (NMS) on detection boxes.
+        Resolves duplicate detections of one object from overlapping chips.
+
+        A box is dropped if a higher-ranked box of the same label overlaps it with IoU above
+        iou_threshold or, when the two come from different chips, if most of the smaller box
+        (containment_threshold) lies inside the other: an object cut off at one chip's edge
+        is then matched to the whole object in the neighbouring chip. Boxes touching a chip
+        edge inside the scene are ranked at confidence x edge_penalty so whole objects win;
+        the reported confidence is unchanged.
         """
         # Group features by label to ensure we only suppress identical classes
         grouped_features = {}
         for feat in features:
             grouped_features.setdefault(feat["label"], []).append(feat)
 
+        def rank(feat: Dict[str, Any]) -> float:
+            return feat["confidence"] * (edge_penalty if feat.get("touches_inner_edge") else 1.0)
+
         nms_features = []
 
         for label, group in grouped_features.items():
-            # Sort group by model confidence (descending)
-            group = sorted(group, key=lambda x: x["confidence"], reverse=True)
+            group = sorted(group, key=rank, reverse=True)
             keep = []
-            
+
             for current in group:
                 should_keep = True
-                current_geom = current["geometry"]
-                
+                current_geom = current["box_geometry"]
+
                 for retained in keep:
-                    retained_geom = retained["geometry"]
-                    
+                    retained_geom = retained["box_geometry"]
+
                     # Optimization: Only compute intersection if bounding boxes overlap
                     if current_geom.intersects(retained_geom):
                         intersection_area = current_geom.intersection(retained_geom).area
                         union_area = current_geom.union(retained_geom).area
-                        
-                        # Calculate Intersection over Union (IoU)
+                        smaller_area = min(current_geom.area, retained_geom.area)
+
                         iou = intersection_area / union_area if union_area > 0 else 0
-                        
-                        # If overlap exceeds threshold, suppress the lower-confidence detection
-                        if iou > iou_threshold:
+                        contained = intersection_area / smaller_area if smaller_area > 0 else 0
+                        other_chip = current["tile_filename"] != retained["tile_filename"]
+
+                        if iou > iou_threshold or (other_chip and contained > containment_threshold):
                             should_keep = False
                             break
-                
+
                 if should_keep:
                     keep.append(current)
-            
+
             nms_features.extend(keep)
-            
+
         return nms_features
+
+    def deduplicate(
+        self, parsed_detections: List[Dict[str, Any]], iou_threshold: float = 0.4
+    ) -> List[Dict[str, Any]]:
+        """
+        Converts parsed detections to map-coordinate boxes and removes duplicates from
+        overlapping chips. Returns the detections that export_to_vector() writes, each with
+        its map box in "box_geometry".
+        """
+        features = [
+            dict(det, box_geometry=self._pixel_bbox_to_geo_polygon(det["local_bbox"], det["transform"]))
+            for det in parsed_detections
+        ]
+        return self._apply_spatial_nms(features, iou_threshold)
 
     def export_to_vector(
         self, 
@@ -176,28 +225,22 @@ class VectorWriter:
             print("No detections provided. Skipping export.")
             return None
 
-        raw_features = []
         target_crs = parsed_detections[0]["crs"]
 
-        for det in parsed_detections:
-            raw_geom = self._pixel_bbox_to_geo_polygon(det["local_bbox"], det["transform"])
-            
-            # Apply dynamic geometry typing based on the label
-            final_geom = self._format_geometry(raw_geom, det["label"])
-
-            # Addition 2: Temporal & Provenance Attribute Enrichment
-            raw_features.append({
-                "geometry": final_geom,
+        # Remove duplicates on the boxes first: once tents or vehicles become points they never overlap
+        cleaned_features = []
+        for det in self.deduplicate(parsed_detections, iou_threshold):
+            cleaned_features.append({
+                # Apply dynamic geometry typing based on the label
+                "geometry": self._format_geometry(det["box_geometry"], det["label"]),
                 "label": det["label"],
                 "confidence": det["confidence"],
+                # Addition 2: Temporal & Provenance Attribute Enrichment
                 "prompt_used": prompt_used,                     # Crucial for methodology verification
                 "acquisition_date": acquisition_date,           # Crucial for Timur's time-series tracking
                 "source_raster": det["source_raster"],
                 "tile_filename": det["tile_filename"]
             })
-
-        # Apply Geospatial NMS to clean up overlapping boundary detections
-        cleaned_features = self._apply_spatial_nms(raw_features, iou_threshold)
 
         # Construct GeoDataFrame
         gdf = gpd.GeoDataFrame(cleaned_features, crs=target_crs)

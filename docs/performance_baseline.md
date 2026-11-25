@@ -63,4 +63,22 @@ Same 10 chips (512 px) unless noted:
 
 **Model load (item 7):** 6–12 s across eight runs, under 1 % of a whole-image run. Preloading weights or loading once for several images is not worth building yet.
 
-**Defaults are unchanged** (512 px, 3 beams, batch 1). All three are now options on `run_pipeline` (`--tile-size`, `--stride`, `--num-beams`, `--batch-size`) and settings in `config.py` (`DEFAULT_TILE_SIZE`, `FLORENCE2_NUM_BEAMS`, `FLORENCE2_BATCH_SIZE`).
+**Defaults after these experiments:** 3 beams and batch 1 unchanged; chip size changed to 768 px (next section). All three are now options on `run_pipeline` (`--tile-size`, `--stride`, `--num-beams`, `--batch-size`) and settings in `config.py` (`DEFAULT_TILE_SIZE`, `FLORENCE2_NUM_BEAMS`, `FLORENCE2_BATCH_SIZE`).
+
+## 2026-11-25 new defaults (768 px chips, image read once per chip, post-processing)
+
+**Reading each chip's image once for all targets** (3 chips, 3 catalogue targets, same session): 47.0 s per chip before, 30.2 s after, with identical outputs. The saving grows with each extra target; it is smaller than the 83 % encoder share suggests because the longer catalogue prompts take more time to write out.
+
+**Whole image, new defaults** (`python -m src.run_pipeline --input synthetic_vantor_targets.tif --ground-truth synthetic_ground_truth.json`, one target `building`):
+
+| Measure | 512 px baseline | 768 px, new defaults |
+|---|---|---|
+| Chips | 121 | 49 |
+| Detection time | 955 s | 164 s |
+| Total time | 16 min 16 s | 3 min 13 s |
+| Boxes from the model | 121 (all whole-chip) | 49 (all whole-chip) |
+| Removed by post-processing | — | 49 |
+| Exported false positives | 100 | 0 |
+| Objects found (of 7) | 0 | 0 |
+
+Post-processing now removes the whole-chip outlines Florence-2 draws on this noise image. Finding none of the 7 injected objects is expected on random noise and says nothing about real imagery; recall must be measured on real scenes with ground truth.

@@ -263,3 +263,14 @@ These fixes make every module compile and import (checked with Python's parser a
 - `config.py`: new `FLORENCE2_NUM_BEAMS` (3) and `FLORENCE2_BATCH_SIZE` (1).
 - `run_pipeline.py`: new `--tile-size`, `--stride`, `--num-beams` and `--batch-size` options. Without `--stride`, the stride keeps the configured 75 % ratio to the tile size.
 - `docs/performance_baseline.md`: results of the chip size, beam and batch experiments. Defaults are unchanged.
+
+### 2026-11-25 — Accuracy and speed improvements (Claude Code, for charliefp03-dg)
+
+- **768 px chips by default** (`config.py`: `DEFAULT_TILE_SIZE = 768`, `DEFAULT_STRIDE = 576`), matching Florence-2's 768 x 768 input. A 4000 px scene is 49 chips instead of 121. `--tile-size 512` restores the old size.
+- `detection/florence2_adapter.py`: each batch of chips is encoded once and reused for every target (image encoding is about 80 % of a model call). Outputs are identical; with 3 targets a chip took 30 s instead of 47 s on the laptop CPU.
+- `run_pipeline.py`: each chip's results now go through `VLMPostProcessor` (catalogue score thresholds; boxes under 10 px², over 10:1, or covering more than `MAX_BOX_CHIP_FRACTION` = 90 % of the chip are dropped). Raw JSONs in `vlm_results/` are unchanged. Evaluation now scores the exported (de-duplicated) objects, per catalogue class plus a location-only row. If nothing survives, no GeoPackage is written and any earlier one is removed.
+- `georeferencing/vector_writer.py`: duplicates are removed on the boxes before tents, vehicles and aircraft become points (previously points never overlapped, so their duplicates were kept). A box mostly (≥ 70 %) inside a box of the same label from a neighbouring chip is also a duplicate, and boxes cut off at an inner chip edge rank at confidence x 0.7, so the whole object wins. New public `deduplicate()`.
+- `tiling/normalizer.py`, `tiling/chipper.py`: the contrast stretch is computed once per scene from a downsampled read, so neighbouring chips show the same ground identically. Real pixels are written as 1–255, so 0 always means NoData.
+- `detection/prompt_manager.py`: new `match_target()` maps free-text labels (e.g. 'military tent') to catalogue keys.
+- `docs/gen_workflow_chart.py` regenerated with correct UTF-8 (the first version was garbled) and the flowchart updated.
+- `docs/2026-11-25_note_for_andrew.md`: decisions made and open items.

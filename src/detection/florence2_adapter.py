@@ -99,7 +99,8 @@ class Florence2Adapter:
             pd.DataFrame: Detection records with pixel coordinates and labels.
         """
         prompt = task_prompt + text_input if text_input else task_prompt
-        parsed_answer, box_scores = self._generate([self._load_image(image_input)], task_prompt, prompt)[0]
+        results, _ = self._generate([self._load_image(image_input)], task_prompt, prompt)
+        parsed_answer, box_scores = results[0]
 
         return self._format_parsed_output(parsed_answer, task_prompt, x_offset, y_offset, box_scores)
 
@@ -111,25 +112,37 @@ class Florence2Adapter:
         return image_input.convert("RGB")
 
     def _generate(
-        self, images: List[Image.Image], task_prompt: str, prompt: str
-    ) -> List[Tuple[Dict[str, Any], Optional[List[float]]]]:
+        self,
+        images: List[Image.Image],
+        task_prompt: str,
+        prompt: str,
+        image_features: Optional[torch.Tensor] = None,
+    ) -> Tuple[List[Tuple[Dict[str, Any], Optional[List[float]]]], torch.Tensor]:
         """
         Runs one model call over images that share a prompt.
 
         A shared prompt keeps every token sequence the same length. Florence-2 does not mask
         padded prompt tokens, so mixing prompts of different lengths in one call would change results.
 
+        Reading the image is most of the model's work (about 80 % on CPU), so pass back the
+        returned image_features to query the same images with another prompt without re-encoding.
+
         Returns:
-            (parsed output, per-box confidences or None) for each image, in input order.
+            ((parsed output, per-box confidences or None) for each image, in input order; image features)
         """
         inputs = self.processor(text=[prompt] * len(images), images=images, return_tensors="pt").to(
             device=self.device, dtype=self.torch_dtype
         )
 
         with torch.no_grad():
+            if image_features is None:
+                image_features = self.model._encode_image(inputs["pixel_values"])
+            # Same merge Florence-2's generate() does internally, with the image encoded only once
+            prompt_embeds = self.model.get_input_embeddings()(inputs["input_ids"])
+            inputs_embeds, _ = self.model._merge_input_ids_with_image_features(image_features, prompt_embeds)
             generated = self.model.generate(
-                input_ids=inputs["input_ids"],
-                pixel_values=inputs["pixel_values"],
+                input_ids=None,
+                inputs_embeds=inputs_embeds,
                 max_new_tokens=1024,
                 num_beams=self.num_beams,
                 early_stopping=True,
@@ -146,7 +159,7 @@ class Florence2Adapter:
             parsed = self.processor.post_process_generation(texts[i], task=task_prompt, image_size=image_size)
             scores = None if transition_scores is None else transition_scores[i]
             results.append((parsed, self._box_scores(generated.sequences[i], scores, image_size)))
-        return results
+        return results, image_features
 
     def _transition_scores(self, generated: Any) -> Optional[torch.Tensor]:
         """Log-probability of each generated token, one row per image; None if unavailable."""
@@ -324,12 +337,15 @@ class Florence2Adapter:
         detections: List[List[Dict[str, Any]]] = [[] for _ in loaded]
 
         # Florence-2 treats a joined prompt as one phrase, so query each target separately
-        # and label detections with the target that produced them.
-        for target in target_list:
-            prompt = task_prompt + prompt_manager.get_target(target)["primary_prompt"]
-            for start in range(0, len(loaded), self.batch_size):
-                batch = loaded[start:start + self.batch_size]
-                for offset, (parsed, box_scores) in enumerate(self._generate(batch, task_prompt, prompt)):
+        # and label detections with the target that produced them. Each batch of images is
+        # encoded once and reused for every target.
+        prompts = [task_prompt + prompt_manager.get_target(target)["primary_prompt"] for target in target_list]
+        for start in range(0, len(loaded), self.batch_size):
+            batch = loaded[start:start + self.batch_size]
+            image_features = None
+            for target, prompt in zip(target_list, prompts):
+                results, image_features = self._generate(batch, task_prompt, prompt, image_features)
+                for offset, (parsed, box_scores) in enumerate(results):
                     df = self._format_parsed_output(parsed, task_prompt, 0, 0, box_scores)
                     detections[start + offset].extend(
                         {

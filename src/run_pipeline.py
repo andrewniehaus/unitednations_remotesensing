@@ -1,9 +1,10 @@
 """
 End-to-end offline object detection run for a single raster.
 
-Tiles the raster, drops unusable tiles, runs the selected VLM, and exports a georeferenced
-GeoPackage to config.PROCESSED_DIR, optionally scoring it against ground truth.
-The detection refinement modules (post-processing, ensembling, verification) are not run yet.
+Tiles the raster, drops unusable tiles, runs the selected VLM, post-processes each chip's
+results (class score thresholds, implausible box sizes), removes duplicates from overlapping
+chips, and exports a georeferenced GeoPackage to config.PROCESSED_DIR, optionally scoring it
+against ground truth. Ensembling, calibration and verification are not run yet.
 
 Run from the repository root:
     python -m src.run_pipeline --input synthetic_vantor_targets.tif --profile disaster_response
@@ -20,6 +21,8 @@ import pandas as pd
 
 from src import config
 from src.detection.batch_runner import BatchInferenceRunner
+from src.detection.post_processor import VLMPostProcessor
+from src.detection.prompt_manager import PromptManager
 from src.detection.run_detection import load_adapter
 from src.georeferencing.vector_writer import VectorWriter
 from src.Testing.eval_metrics import SpatialEvalMetrics
@@ -66,49 +69,104 @@ def filter_tiles(manifest: Dict[str, Any], max_tiles: int = 0) -> Path:
     return filtered_path
 
 
+def build_post_processor(targets: List[str], prompt_manager: PromptManager) -> VLMPostProcessor:
+    """Post-processor using each target's catalogue score threshold (0.25 for targets not in the catalogue)."""
+    return VLMPostProcessor(
+        class_score_thresh={
+            target.lower(): prompt_manager.get_target(target)["box_threshold"] for target in targets
+        },
+    )
+
+
+def refine_tile_results(
+    results: List[Dict[str, Any]], post_processor: VLMPostProcessor, tile_size: int
+) -> List[Dict[str, Any]]:
+    """
+    Applies the per-class score threshold and drops implausible boxes from one chip's results:
+    under 10 px², aspect ratio over 10:1, or covering more than config.MAX_BOX_CHIP_FRACTION
+    of the chip (Florence-2 sometimes outlines the whole chip).
+    """
+    if not results:
+        return []
+    df = pd.DataFrame(
+        [(*r["bbox"], r["label"], r["confidence"]) for r in results],
+        columns=["xmin", "ymin", "xmax", "ymax", "label", "confidence"],
+    )
+    df = post_processor.apply_semantic_mapping(df)
+    df = post_processor.filter_by_confidence(df)
+    df = post_processor.morphological_filter(df, max_area=config.MAX_BOX_CHIP_FRACTION * tile_size ** 2)
+    return [
+        {"bbox": [row.xmin, row.ymin, row.xmax, row.ymax], "label": row.label, "confidence": row.confidence}
+        for row in df.itertuples(index=False)
+    ]
+
+
 def collect_detections(
-    writer: VectorWriter, tiles: List[Dict[str, Any]], results_dir: Path
-) -> Tuple[List[Dict[str, Any]], int]:
-    """Loads per-tile VLM results; returns georeferencing-ready detections and the missing tile count."""
+    writer: VectorWriter,
+    tiles: List[Dict[str, Any]],
+    results_dir: Path,
+    post_processor: VLMPostProcessor,
+    tile_size: int,
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """
+    Loads and post-processes per-tile VLM results.
+
+    Returns:
+        Georeferencing-ready detections, the count of tiles without results, and the
+        count of raw detections removed by post-processing.
+    """
     detections: List[Dict[str, Any]] = []
-    missing = 0
+    missing = removed = 0
     for tile in tiles:
         result_path = results_dir / Path(tile["filename"]).with_suffix(".json")
         if not result_path.exists():
             missing += 1
             continue
         with open(result_path, "r", encoding="utf-8") as f:
-            results = json.load(f)
+            raw_results = json.load(f)
+        results = refine_tile_results(raw_results, post_processor, tile_size)
+        removed += len(raw_results) - len(results)
         detections += writer.parse_inference_outputs(
             tile["filename"],
             [r["bbox"] for r in results],
             [r["label"] for r in results],
             [r["confidence"] for r in results],
         )
-    return detections, missing
+    return detections, missing, removed
 
 
 def evaluate(
-    writer: VectorWriter, detections: List[Dict[str, Any]], ground_truth_path: Path
+    exported: List[Dict[str, Any]], ground_truth_path: Path, prompt_manager: PromptManager
 ) -> pd.DataFrame:
-    """Scores detections against ground truth using each object's location only, ignoring class."""
+    """
+    Scores the exported detections against ground truth, per class and overall.
+
+    Labels on both sides are mapped to catalogue classes (e.g. 'military tent' -> 'tents');
+    labels with no catalogue match are compared as written. The 'ALL (location only)' row
+    ignores class.
+    """
     with open(ground_truth_path, "r", encoding="utf-8") as f:
         ground_truth = json.load(f)
 
+    def to_class(label: str) -> str:
+        return prompt_manager.match_target(label) or label.lower().strip()
+
     columns = ["label", "xmin", "ymin", "xmax", "ymax"]
     gt_df = pd.DataFrame(
-        [("object", g["geo_bbox_utm"][0], g["geo_bbox_utm"][3], g["geo_bbox_utm"][2], g["geo_bbox_utm"][1])
+        [(to_class(g["label"]), g["geo_bbox_utm"][0], g["geo_bbox_utm"][3], g["geo_bbox_utm"][2], g["geo_bbox_utm"][1])
          for g in ground_truth],
         columns=columns,
     )
+    pred_df = pd.DataFrame(
+        [(to_class(det["label"]), *det["box_geometry"].bounds, det["confidence"]) for det in exported],
+        columns=columns + ["confidence"],
+    )
 
-    rows = []
-    for det in detections:
-        xmin, ymin, xmax, ymax = writer._pixel_bbox_to_geo_polygon(det["local_bbox"], det["transform"]).bounds
-        rows.append(("object", xmin, ymin, xmax, ymax, det["confidence"]))
-    pred_df = pd.DataFrame(rows, columns=columns + ["confidence"])
-
-    return SpatialEvalMetrics().evaluate_pipeline_output(gt_df, pred_df)
+    metrics = SpatialEvalMetrics()
+    per_class = metrics.evaluate_pipeline_output(gt_df, pred_df)
+    overall = metrics.evaluate_pipeline_output(gt_df.assign(label="ALL (location only)"),
+                                               pred_df.assign(label="ALL (location only)"))
+    return pd.concat([per_class, overall], ignore_index=True)
 
 
 def main() -> None:
@@ -142,7 +200,7 @@ def main() -> None:
             logger.critical(f"--skip-chip needs an existing manifest at {manifest_path}.")
             sys.exit(1)
     else:
-        # Keep the configured overlap ratio (384/512 = 75%) when only the tile size changes
+        # Keep the configured stride-to-size ratio (75 %, i.e. 25 % overlap) when only the tile size changes
         stride = args.stride or round(args.tile_size * config.DEFAULT_STRIDE / config.DEFAULT_TILE_SIZE)
         logger.info(f"Chipping {input_path.name} into {args.tile_size} px chips, stride {stride}...")
         RasterChipper(tile_size=args.tile_size, stride=stride).chip_raster(input_path)
@@ -174,28 +232,40 @@ def main() -> None:
     )
 
     writer = VectorWriter()
-    detections, missing = collect_detections(writer, tiles, results_dir)
+    prompt_manager = PromptManager()
+    detections, missing, removed = collect_detections(
+        writer, tiles, results_dir, build_post_processor(targets, prompt_manager), manifest["tile_size"]
+    )
     if missing == len(tiles):
         logger.critical("Detection produced no results for any tile. See detection_run.log.")
         sys.exit(1)
     if missing:
         logger.warning(f"{missing} of {len(tiles)} tiles have no detection results and are excluded.")
-    logger.info(f"Collected {len(detections)} detections.")
-
-    output_path = writer.export_to_vector(
-        detections,
-        prompt_used=", ".join(targets),
-        acquisition_date=args.acquisition_date,
-        output_filename=f"{input_path.stem}_detections.gpkg",
+    exported = writer.deduplicate(detections)
+    logger.info(
+        f"Detections: {len(detections) + removed} from the model, {removed} removed by post-processing, "
+        f"{len(detections) - len(exported)} duplicates from overlapping chips removed, {len(exported)} kept."
     )
-    if output_path:
+
+    output_path = config.PROCESSED_DIR / f"{input_path.stem}_detections.gpkg"
+    if exported:
+        writer.export_to_vector(
+            detections,
+            prompt_used=", ".join(targets),
+            acquisition_date=args.acquisition_date,
+            output_filename=output_path.name,
+        )
         logger.info(f"Exported detections to {output_path}")
+    else:
+        output_path.unlink(missing_ok=True)  # don't leave an earlier run's output looking current
+        logger.warning("No detections left to export; no GeoPackage written.")
 
     if args.ground_truth:
         ground_truth_path = Path(args.ground_truth)
         if not ground_truth_path.exists():
             ground_truth_path = config.RAW_DIR / args.ground_truth
-        logger.info("Location-only evaluation against ground truth:\n" + evaluate(writer, detections, ground_truth_path).to_string(index=False))
+        logger.info("Evaluation of exported detections against ground truth:\n"
+                    + evaluate(exported, ground_truth_path, prompt_manager).to_string(index=False))
 
     logger.info("Pipeline complete.")
 

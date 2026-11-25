@@ -8,6 +8,7 @@ from rasterio.io import DatasetReader
 
 import numpy as np
 import rasterio
+from rasterio.enums import Resampling
 from rasterio.transform import Affine
 from rasterio.windows import Window
 
@@ -191,15 +192,16 @@ class RasterChipper:
         row_idx: int,
         col_idx: int,
         nodata: Optional[Union[int, float]] = None,
+        band_limits: Optional[List[Optional[Tuple[float, float]]]] = None,
     ) -> Dict[str, Any]:
         """Worker function to normalize, pad, georeference, and write a tile concurrently."""
         _, orig_h, orig_w = tile_data.shape
         pad_h = self.tile_size - orig_h
         pad_w = self.tile_size - orig_w
 
-        # 1. Normalize raw array to standard 8-bit, 3-channel RGB for VLM ingestion.
-        # NoData pixels are left out of the contrast stretch so borders don't flatten the real image.
-        tile_data = self.normalizer.normalize(tile_data, nodata=nodata)
+        # 1. Normalize raw array to standard 8-bit, 3-channel RGB for VLM ingestion, using the
+        # scene-wide stretch so every tile is scaled the same way. NoData is left out of the stretch.
+        tile_data = self.normalizer.normalize(tile_data, nodata=nodata, band_limits=band_limits)
 
         # 2. Pad the normalized array to uniform dimensions
         padded_data = self.pad_tile(tile_data)
@@ -252,6 +254,15 @@ class RasterChipper:
         for stale_file in stale_files:
             stale_file.unlink()
 
+    def _scene_band_limits(
+        self, src: DatasetReader, nodata: Union[int, float], max_side: int = 2048
+    ) -> List[Optional[Tuple[float, float]]]:
+        """Contrast-stretch limits per band from a downsampled read of the whole raster."""
+        scale = min(1.0, max_side / max(src.width, src.height))
+        out_shape = (src.count, max(1, round(src.height * scale)), max(1, round(src.width * scale)))
+        overview = src.read(out_shape=out_shape, resampling=Resampling.nearest)
+        return self.normalizer.band_limits(overview, nodata)
+
     @staticmethod
     def _valid_fraction(tile_data: np.ndarray, nodata: Union[int, float]) -> float:
         """Share of pixels holding data in any band."""
@@ -277,6 +288,7 @@ class RasterChipper:
 
         with rasterio.open(input_path) as src:
             nodata_val = src.nodata if src.nodata is not None else self.fill_value
+            band_limits = self._scene_band_limits(src, nodata_val)
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 for row_idx, col_idx, window in self.get_tile_windows(src):
@@ -296,6 +308,7 @@ class RasterChipper:
                         row_idx,
                         col_idx,
                         nodata_val,
+                        band_limits,
                     )
                     futures.append(future)
 

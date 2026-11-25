@@ -1,9 +1,9 @@
-﻿"""
+"""
 Generates docs/object_detection_workflow.png's HTML source. Edit STEPS below to update the chart.
 
 Render (Windows, from the repository root):
     python docs/gen_workflow_chart.py workflow.html
-    msedge --headless=new --hide-scrollbars --force-device-scale-factor=2.37 --window-size=1520,2700 --screenshot=chart.png workflow.html
+    msedge --headless=new --hide-scrollbars --force-device-scale-factor=2.37 --window-size=1520,3100 --screenshot=chart.png workflow.html
 Then crop the blank space below the notes.
 """
 import html
@@ -19,10 +19,10 @@ BADGES = {
 }
 
 INPUTS = [
-    ("data/raw/", ["Very-high-resolution GeoTIFFs: Maxar/Vantor, Airbus PlÃ©iades/SPOT (optical), Capella (SAR radar)"]),
+    ("data/raw/", ["Very-high-resolution GeoTIFFs: Maxar/Vantor, Airbus Pléiades/SPOT (optical), Capella (SAR radar)"]),
     ("Incident reports", ["Points (longitude/latitude + date), e.g. from Liveuamap or manual reports"]),
     ("models/", ["Local weights: Florence-2 (in use), Grounding DINO, ResNet-50 + prototype images per class"]),
-    ("src/config.py", ["Paths, CPU/GPU, 512 px chips every 384 px, 3 beams, batch size 1, target profiles"]),
+    ("src/config.py", ["Paths, CPU/GPU, 768 px chips every 576 px, 3 beams, batch size 1, target profiles"]),
 ]
 
 # (number, colour, title, question, explanation, modules, passes_on)
@@ -31,29 +31,30 @@ STEPS = [
      "Builds a catalogue of every scene, then picks the scenes and pixel areas that cover each incident.",
      [("ingestion/local_archive_indexer.py", "LocalArchiveIndexer", NOT_WIRED,
        ["Reads each scene's footprint (WGS84), size, resolution, CRS",
-        "Date from sidecar â†’ TIFF tag â†’ filename; vendor â†’ optical / SAR",
-        "Catalogue â†’ GeoJSON / SQLite; <i>query_buffer()</i> by area, time window, sensor type"]),
+        "Date from sidecar → TIFF tag → filename; vendor → optical / SAR",
+        "Catalogue → GeoJSON / SQLite; <i>query_buffer()</i> by area, time window, sensor type"]),
       ("ingestion/spatial_buffer.py", "SpatialBufferEngine", NOT_WIRED,
-       ["Each incident point â†’ square buffer (default 1 km, in local UTM metres)",
+       ["Each incident point → square buffer (default 1 km, in local UTM metres)",
         "Intersects buffers with scene footprints",
         "Outputs the exact pixel window to cut from each matching scene"])],
      "Selected GeoTIFFs + pixel windows (today: one raster passed with <code>--input</code>)"),
     (2, "blue", "Standardise the imagery", "Make every image look alike to the model.",
      "Different satellites differ in resolution, bands and brightness. Evening these out means a tent looks the same size and colour to the model, whichever satellite took the picture.",
      [("ingestion/sar_processor.py", "SARProcessor (radar only)", NOT_WIRED,
-       ["Raw values â†’ backscatter in dB (âˆ’30 â€¦ +5)", "Speckle removed (median / Gaussian filter)",
+       ["Raw values → backscatter in dB (−30 … +5)", "Speckle removed (median / Gaussian filter)",
         "Dual-pol ratio band: tents vs buildings"]),
       ("tiling/gsd_resampler.py", "GSDResampler", NOT_WIRED,
        ["Resamples to one ground resolution: 0.5 m per pixel", "Skips scenes already within 5 %"]),
-      ("tiling/band_selector.py Â· normalizer.py", "BandSelector Â· ArrayNormalizer", RUN,
-       ["4-band, 8-band or SAR â†’ 3-channel 8-bit RGB (what the models expect)",
-        "2â€“98 % contrast stretch per chip, <b>NoData left out of the stretch</b>",
+      ("tiling/band_selector.py · normalizer.py", "BandSelector · ArrayNormalizer", RUN,
+       ["4-band, 8-band or SAR → 3-channel 8-bit RGB (what the models expect)",
+        "2–98 % contrast stretch <b>worked out once per scene</b>, so every chip is scaled the same; NoData left out",
+        "Real pixels written as 1–255, so 0 always means NoData",
         "Normalizer runs inside the chipper; BandSelector not wired"])],
      "Uniform 8-bit RGB rasters"),
     (3, "blue", "Cut into chips & drop empty ones", "The models see small squares, not whole scenes.",
      "Scenes are far too large for the model, so they are cut into overlapping chips. Each chip keeps an \"address\" so its results can be put back on the map. Blank, cloudy or featureless chips are skipped before the model runs.",
      [("tiling/chipper.py", "RasterChipper", RUN,
-       ["512 Ã— 512 px windows every 384 px (128 px overlap); last row/column flush to the edge",
+       ["768 × 768 px windows (Florence-2's input size) every 576 px (192 px overlap); last row/column flush to the edge",
         "Windows under 5 % valid pixels are not written",
         "Writes <b>tile_manifest.json</b>: each chip's pixel window and geotransform",
         "Re-chipping clears that raster's old chips and results"]),
@@ -64,62 +65,64 @@ STEPS = [
        ["Drops chips with &lt; 50 % valid pixels, &gt; 60 % cloud, or entropy &lt; 3.5 (empty desert, water)",
         "Runs before every model call (run_pipeline, run_detection)",
         "Reasons logged to tile_rejection_manifest.json"])],
-     "Usable 512 px RGB chips + chip manifest (the map \"address book\")"),
-    (4, "purple", "Detect & label objects", "Where are the tents, vehicles, trenches â€¦?",
+     "Usable 768 px RGB chips + chip manifest (the map \"address book\")"),
+    (4, "purple", "Detect & label objects", "Where are the tents, vehicles, trenches …?",
      "A vision-language model is asked in plain English to find each target type. It returns a box, a label and a confidence score for everything it finds, with no task-specific training needed.",
-     [("detection/prompt_manager.py", "PromptManager Â· 8 target classes", RUN,
-       ["tents Â· trenchlines Â· damaged_buildings Â· aircraft Â· military_compounds Â· guard_towers Â· military_vehicles Â· emergency_assets",
-        "Each: prompt + synonyms + own score threshold (0.20â€“0.35)",
+     [("detection/prompt_manager.py", "PromptManager · 8 target classes", RUN,
+       ["tents · trenchlines · damaged_buildings · aircraft · military_compounds · guard_towers · military_vehicles · emergency_assets",
+        "Each: prompt + synonyms + own score threshold (0.20–0.35)",
         "Profile names not in the catalogue are used as raw prompts"]),
       ("detection/florence2_adapter.py", "Florence2Adapter", RUN,
        ["Task &lt;OPEN_VOCABULARY_DETECTION&gt;, one query per target",
+        "Each chip's image is read once and reused for every target",
         "<b>Confidence</b> = how sure the model is of the box's 4 edge positions (not whether the object exists)",
-        "Chips with the same target batched per call (FLORENCE2_BATCH_SIZE)"]),
+        "Chips batched per call (FLORENCE2_BATCH_SIZE)"]),
       ("detection/grounding_dino_adapter.py", "GroundingDINOAdapter", BLOCKED,
-       ["Prompt \"tent . refugee tent . â€¦\"", "Returns boxes with real confidence scores, filtered per class",
-        "âš  Needs transformers â‰¥ 4.40; environment pins 4.38. Deferred"]),
+       ["Prompt \"tent . refugee tent . …\"", "Returns boxes with real confidence scores, filtered per class",
+        "⚠ Needs transformers ≥ 4.40; environment pins 4.38. Deferred"]),
       ("detection/batch_runner.py", "BatchInferenceRunner", RUN,
        ["Filters chips first, then runs the model on the rest",
-        "One JSON per chip â†’ data/interim/vlm_results/",
+        "One JSON per chip → data/interim/vlm_results/",
         "Resumable: skips chips that already have results"])],
      "Per chip: [ {bbox, label, confidence} ] in chip pixel coordinates"),
     (5, "orange", "Clean up & combine", "Turn raw guesses from two models into one list.",
      "Labels are standardised, implausible boxes are removed, and overlapping answers from both models are merged. Agreement between the models raises the score. Duplicates from overlapping chips are removed.",
-     [("detection/post_processor.py", "VLMPostProcessor", NOT_WIRED,
-       ["Free-text labels â†’ standard class names", "Per-class score cut-off (default 0.30)",
-        "Removes boxes outside 10â€“250 000 pxÂ² or aspect &gt; 10:1 (would remove whole-chip boxes)"]),
-      ("detection/ensemble_detector.py", "EnsembleDetector Â· Weighted Box Fusion", NOT_WIRED,
-       ["Merges boxes that overlap â‰¥ 50 % (IoU)", "Model weights: Grounding DINO 1.2, Florence-2 1.0",
+     [("detection/post_processor.py", "VLMPostProcessor", RUN,
+       ["Runs on each chip's results in run_pipeline (raw JSONs kept unchanged)",
+        "Per-class score cut-off from the prompt catalogue (0.25 if not in it)",
+        "Removes boxes under 10 px², aspect &gt; 10:1, or covering &gt; 90 % of the chip (whole-chip outlines)"]),
+      ("detection/ensemble_detector.py", "EnsembleDetector · Weighted Box Fusion", NOT_WIRED,
+       ["Merges boxes that overlap ≥ 50 % (IoU)", "Model weights: Grounding DINO 1.2, Florence-2 1.0",
         "+0.15 score when both models agree"]),
       ("tiling/nms_handler.py", "TiledNMSHandler", NOT_WIRED,
        ["Removes duplicates where chips overlapped (IoU 0.45, optional Soft-NMS)",
-        "Boxes touching a chip edge scored Ã— 0.70, so whole objects win"])],
+        "Its edge rule assumes non-overlapping chips; the same idea now runs in vector_writer.py (step 7)"])],
      "One de-duplicated detection table: box, class, fused score, agreeing models"),
     (6, "orange", "Verify the classification", "Is it really what the model says it is?",
      "Scores are turned into real probabilities. Each object is checked against example images of its class and against common-sense geographic rules. Uncertain cases go to a person.",
      [("detection/confidence_calibrator.py", "ConfidenceCalibrator", NOT_WIRED,
-       ["Platt scaling: score â†’ probability (fitted on validation data)",
+       ["Platt scaling: score → probability (fitted on validation data)",
         "Up to 30 % discount in suspiciously dense clusters (100 m)"]),
       ("detection/zero_shot_verifier.py", "ZeroShotVerifier", NOT_WIRED,
-       ["Crops each box â†’ ResNet-50 embedding", "Compared with example images in models/prototypes/&lt;class&gt;/",
-        "Final = 0.5 Ã— model score + 0.5 Ã— similarity"]),
+       ["Crops each box → ResNet-50 embedding", "Compared with example images in models/prototypes/&lt;class&gt;/",
+        "Final = 0.5 × model score + 0.5 × similarity"]),
       ("detection/spatial_heuristics.py", "SpatialHeuristicsEngine", NOT_WIRED,
        ["No land objects on water", "Related targets near an anchor (e.g. vehicles near compounds)",
-        "Trench segments must connect; realistic size in mÂ²"]),
-      ("detection/hard_negative_miner.py", "HardNegativeMiner Â· human in the loop", HUMAN,
-       ["Uncertain (0.25â€“0.40) and isolated (outlier) detections",
+        "Trench segments must connect; realistic size in m²"]),
+      ("detection/hard_negative_miner.py", "HardNegativeMiner · human in the loop", HUMAN,
+       ["Uncertain (0.25–0.40) and isolated (outlier) detections",
         "Crops + HTML gallery for an analyst to confirm or reject",
-        "â†º Feeds better prototypes, thresholds and future training data back into steps 4â€“6"])],
+        "↺ Feeds better prototypes, thresholds and future training data back into steps 4–6"])],
      "Verified objects: class + calibrated probability (still in pixel coordinates)"),
     (7, "green", "Place on the map & export", "Where on Earth is each object?",
      "Each chip's address in the manifest turns pixel boxes into real-world coordinates. Countable objects become points; infrastructure stays as outlines.",
      [("georeferencing/vector_writer.py", "VectorWriter", RUN,
-       ["Chip geotransform (from manifest) Ã— pixel box â†’ map polygon",
-        "Tents, aircraft, vehicles â†’ points; trenches, compounds â†’ polygons",
-        "Removes duplicates across overlapping chips (IoU 0.4), keeping the higher score",
+       ["Chip geotransform (from manifest) × pixel box → map polygon",
+        "Removes duplicates across overlapping chips on the boxes: IoU &gt; 0.4, or a box ≥ 70 % inside one from a neighbouring chip; boxes cut off at a chip edge rank × 0.7, so whole objects win",
+        "Then tents, aircraft, vehicles → points; trenches, compounds → polygons",
         "Adds prompt used, acquisition date and source scene"]),
-      ("georeferencing/crs_manager.py Â· coord_transformer.py", "CRSManager Â· CoordinateTransformer", NOT_WIRED,
-       ["Pixel â†’ map coordinates via affine transform",
+      ("georeferencing/crs_manager.py · coord_transformer.py", "CRSManager · CoordinateTransformer", NOT_WIRED,
+       ["Pixel → map coordinates via affine transform",
         "Reprojects everything to one consistent CRS (EPSG:4326 fallback)"]),
       ("tiling/rebuilder.py", "RasterRebuilder (optional)", NOT_WIRED,
        ["Stitches chip results back into one GeoTIFF or GeoPackage for whole-scene viewing"])],
@@ -128,11 +131,11 @@ STEPS = [
      "Detections are linked to buildings and population to show human impact, then scored against known correct answers.",
      [("ingestion/spatial_overlay.py", "SpatialOverlayEngine", NOT_WIRED,
        ["Optionally keeps only detections touching a building footprint (removes non-structural false positives)",
-        "Sums WorldPop population inside each object â†’ people exposed"]),
+        "Sums WorldPop population inside each object → people exposed"]),
       ("Testing/eval_metrics.py", "SpatialEvalMetrics", RUN,
        ["One-to-one matching with ground truth (Hungarian algorithm)",
-        "Precision, recall, F1, mAP@50 and mAP@50:95",
-        "Run with <code>--ground-truth</code>; currently location only, class ignored"])],
+        "Precision, recall, F1, mAP@50 and mAP@50:95 (mAP is a simplified estimate)",
+        "Run with <code>--ground-truth</code>: scores the exported objects per catalogue class, plus location only"])],
      None),
 ]
 
@@ -150,7 +153,7 @@ def build() -> str:
     inputs = "".join(
         f'<div class="card input"><div class="mono">{html.escape(t)}</div><ul>{"".join(f"<li>{b}</li>" for b in bs)}</ul></div>'
         for t, bs in INPUTS)
-    rows.append(f'<div class="row"><div class="concept start"><h2>START Â· Inputs</h2>'
+    rows.append(f'<div class="row"><div class="concept start"><h2>START · Inputs</h2>'
                 f'<p>Everything is held locally; nothing is downloaded while running.</p></div>'
                 f'<div class="mods" style="--n:4">{inputs}</div></div>')
     rows.append('<div class="row pass"><div class="arrow"></div><div><span class="pill"><b>PASSES ON</b> Raw scenes + incident points</span></div></div>')
@@ -164,13 +167,13 @@ def build() -> str:
             rows.append(f'<div class="row pass"><div class="arrow"></div><div><span class="pill"><b>PASSES ON</b> {passes}</span></div></div>')
     rows.append('<div class="row pass"><div class="arrow"></div><div></div></div>')
 
-    rows.append('<div class="row"><div class="concept end"><h2>END Â· Classified object map</h2>'
+    rows.append('<div class="row"><div class="concept end"><h2>END · Classified object map</h2>'
                 '<p>Ready for analysts in QGIS / ArcGIS</p></div>'
                 '<div class="card endcard"><div class="mono green">Each object in the GeoPackage carries</div><ul>'
                 '<li><b>What:</b> class (e.g. tent, military vehicle, damaged building) + confidence</li>'
                 '<li><b>Where:</b> point or polygon in real-world coordinates</li>'
                 '<li><b>When &amp; from what:</b> acquisition date, source scene, prompt used</li>'
-                '<li><b>Impact:</b> estimated people exposed Â· <b>Quality:</b> precision / recall (planned)</li>'
+                '<li><b>Impact:</b> estimated people exposed · <b>Quality:</b> precision / recall (planned)</li>'
                 '</ul></div></div>')
 
     return TEMPLATE.replace("{{ROWS}}", "\n".join(rows))
@@ -235,8 +238,8 @@ li::marker { color:#9aa3af; }
 </style></head>
 <body><div class="page">
 <h1>Satellite Object Detection &amp; Classification Workflow</h1>
-<p class="sub">unitednations_remotesensing Â· offline ("air-gapped") pipeline: from raw satellite scenes to a classified, map-ready layer of objects. Shows the full design in <code>src/</code> and which parts run today. Updated 25 Nov 2026.</p>
-<div class="run-strip"><b>Run it today:</b> <code>python -m src.run_pipeline --input &lt;raster&gt; [--profile disaster_response] [--ground-truth gt.json] [--tile-size 768] [--batch-size N]</code> runs steps 3 â†’ 4 â†’ 7 (â†’ 8 when ground truth is given). Steps 1â€“2, 5â€“6 and the overlay in step 8 are written but not yet connected.</div>
+<p class="sub">unitednations_remotesensing · offline ("air-gapped") pipeline: from raw satellite scenes to a classified, map-ready layer of objects. Shows the full design in <code>src/</code> and which parts run today. Updated 25 Nov 2026.</p>
+<div class="run-strip"><b>Run it today:</b> <code>python -m src.run_pipeline --input &lt;raster&gt; [--profile disaster_response] [--ground-truth gt.json] [--tile-size N] [--batch-size N]</code> runs steps 3 → 4 → post-processing (5) → 7 (→ 8 when ground truth is given). Steps 1–2, the rest of 5–6 and the overlay in step 8 are written but not yet connected.</div>
 <div class="legend">
 <span><i style="background:var(--blue)"></i>Prepare the imagery</span>
 <span><i style="background:var(--purple)"></i>Detect objects with AI models</span>
@@ -247,13 +250,12 @@ li::marker { color:#9aa3af; }
 <span><span class="badge b-blk">BLOCKED</span></span>
 <span><span class="badge b-hum">HUMAN IN THE LOOP</span></span>
 </div>
-<div class="cols"><div>CONCEPTUALLY â€” WHAT &amp; WHY</div><div>TECHNICALLY â€” MODULE Â· METHOD Â· KEY SETTINGS</div></div>
+<div class="cols"><div>CONCEPTUALLY — WHAT &amp; WHY</div><div>TECHNICALLY — MODULE · METHOD · KEY SETTINGS</div></div>
 {{ROWS}}
-<div class="notes"><b>Notes.</b> Tested end to end on synthetic imagery only; real imagery is the next step. On the laptop CPU, Florence-2 takes about 6â€“9 s per chip per target, 83 % of it reading the image; a 4000 Ã— 4000 px scene is 121 chips at 512 px or 49 at 768 px (<code>docs/performance_baseline.md</code>). Because steps 5â€“6 are not wired in, boxes covering a whole chip currently reach the output. Confidence measures how precisely a box is placed, not whether the object exists. <b>Known gaps:</b> Grounding DINO needs a newer <i>transformers</i>; <i>chipper.py</i> and <i>parallel_chipper.py</i> write different manifest formats; there are two <i>CoordinateTransformer</i> classes. <b>Not shown:</b> a parallel change-detection track (<i>src/change_detection/</i>) that compares before and after images using Clay foundation-model embeddings.</div>
+<div class="notes"><b>Notes.</b> Tested end to end on synthetic imagery only; real imagery is the next step. On the laptop CPU, Florence-2 takes about 6–9 s per chip for the first target (most of it reading the image) and less for each further target, because the image is read once per chip; a 4000 × 4000 px scene is 49 chips at 768 px (121 at the former 512 px; see <code>docs/performance_baseline.md</code>). Confidence measures how precisely a box is placed, not whether the object exists. <b>Known gaps:</b> Grounding DINO needs a newer <i>transformers</i>; <i>chipper.py</i> and <i>parallel_chipper.py</i> write different manifest formats; there are two <i>CoordinateTransformer</i> classes. Open decisions are listed in <code>docs/2026-11-25_note_for_andrew.md</code>. <b>Not shown:</b> a parallel change-detection track (<i>src/change_detection/</i>) that compares before and after images using Clay foundation-model embeddings.</div>
 </div></body></html>
 """
 
 if __name__ == "__main__":
     Path(sys.argv[1]).write_text(build(), encoding="utf-8")
     print(f"wrote {sys.argv[1]}")
-
