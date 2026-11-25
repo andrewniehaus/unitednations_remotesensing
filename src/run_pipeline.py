@@ -123,6 +123,14 @@ def main() -> None:
     parser.add_argument("--max-tiles", type=int, default=0, help="Detect on only the first N usable tiles.")
     parser.add_argument("--skip-chip", action="store_true",
                         help="Reuse existing tiles and resume detection. Without this, re-chipping clears earlier results.")
+    parser.add_argument("--tile-size", type=int, default=config.DEFAULT_TILE_SIZE,
+                        help="Chip width/height in pixels. Florence-2 resizes every chip to 768 x 768.")
+    parser.add_argument("--stride", type=int, default=None,
+                        help="Pixels between chip starts. Defaults to config.DEFAULT_STRIDE, scaled with --tile-size.")
+    parser.add_argument("--num-beams", type=int, default=None,
+                        help="Florence-2 beam search width (config.FLORENCE2_NUM_BEAMS). 1 is faster.")
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help="Chips per Florence-2 model call (config.FLORENCE2_BATCH_SIZE).")
     args = parser.parse_args()
 
     input_path = resolve_input(args.input)
@@ -134,8 +142,10 @@ def main() -> None:
             logger.critical(f"--skip-chip needs an existing manifest at {manifest_path}.")
             sys.exit(1)
     else:
-        logger.info(f"Chipping {input_path.name}...")
-        RasterChipper().chip_raster(input_path)
+        # Keep the configured overlap ratio (384/512 = 75%) when only the tile size changes
+        stride = args.stride or round(args.tile_size * config.DEFAULT_STRIDE / config.DEFAULT_TILE_SIZE)
+        logger.info(f"Chipping {input_path.name} into {args.tile_size} px chips, stride {stride}...")
+        RasterChipper(tile_size=args.tile_size, stride=stride).chip_raster(input_path)
 
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
@@ -150,7 +160,15 @@ def main() -> None:
 
     logger.info(f"Running {args.model} with profile '{args.profile}': {targets}")
     results_dir = config.INTERIM_DIR / "vlm_results"
-    BatchInferenceRunner(model_adapter=load_adapter(args.model)).run_on_manifest(
+    adapter = load_adapter(args.model)
+    for setting in ("num_beams", "batch_size"):
+        value = getattr(args, setting)
+        if value is not None:
+            if hasattr(adapter, setting):
+                setattr(adapter, setting, value)
+            else:
+                logger.warning(f"--{setting.replace('_', '-')} is not supported by {args.model}; ignored.")
+    BatchInferenceRunner(model_adapter=adapter).run_on_manifest(
         manifest_path=filtered_manifest_path, targets=targets, output_dir=results_dir,
         filter_tiles=False,  # already filtered above
     )

@@ -9,7 +9,7 @@ import gc
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from tqdm import tqdm
@@ -83,38 +83,68 @@ class BatchInferenceRunner:
         usable = self._usable_tiles(list(tile_paths)) if filter_tiles else list(tile_paths)
         logger.info(f"Starting batch inference over {len(usable)} tiles.")
 
-        overwrite_allowed = getattr(config, 'DEFAULT_OVERWRITE', False)
+        # Preserve directory structure in output
+        jobs = [(tile_path, out_dir / tile_paths[tile_path].with_suffix(".json")) for tile_path in usable]
+        self._run_jobs(jobs, targets, "VLM Tile Inference", clear_vram_frequency, **kwargs)
 
-        for idx, tile_path in enumerate(tqdm(usable, desc="VLM Tile Inference")):
-            # Preserve directory structure in output
-            json_output_path = out_dir / tile_paths[tile_path].with_suffix(".json")
-
-            if json_output_path.exists() and not overwrite_allowed:
-                continue
-
-            # Ensure subdirectories exist before writing
-            json_output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            try:
-                results = self.adapter.predict(
-                    image_data=tile_path,
-                    targets=targets,
-                    **kwargs,
-                )
-
-                with open(json_output_path, "w", encoding="utf-8") as jf:
-                    json.dump(results, jf, indent=2)
-
-            except Exception as e:
-                logger.error(f"Error processing tile {tile_path.name}: {e}")
-                continue
-
-            if (idx + 1) % clear_vram_frequency == 0:
-                self._clear_vram()
-
-        self._clear_vram()
         logger.info(f"Batch inference complete. Results stored in {out_dir}")
         return out_dir
+
+    def _run_jobs(
+        self,
+        jobs: List[Tuple[Path, Path]],
+        targets: Union[str, List[str]],
+        description: str,
+        clear_vram_frequency: int,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Runs the model on (tile, output JSON) pairs and writes one JSON per tile.
+
+        Adapters with predict_many() get adapter.batch_size tiles per call; others get one.
+        Existing JSONs are skipped unless config.DEFAULT_OVERWRITE is set.
+        """
+        if not getattr(config, 'DEFAULT_OVERWRITE', False):
+            jobs = [(tile, out) for tile, out in jobs if not out.exists()]
+
+        batched = hasattr(self.adapter, "predict_many")
+        batch_size = max(1, getattr(self.adapter, "batch_size", 1)) if batched else 1
+
+        with tqdm(total=len(jobs), desc=description) as progress:
+            for start in range(0, len(jobs), batch_size):
+                chunk = jobs[start:start + batch_size]
+                try:
+                    if batched:
+                        chunk_results = self.adapter.predict_many([tile for tile, _ in chunk], targets, **kwargs)
+                    else:
+                        chunk_results = [self.adapter.predict(image_data=chunk[0][0], targets=targets, **kwargs)]
+                except Exception as e:
+                    if len(chunk) == 1:
+                        logger.error(f"Error processing tile {chunk[0][0].name}: {e}")
+                        progress.update(1)
+                        continue
+                    # Retry one tile at a time so a single bad tile doesn't lose the whole batch
+                    logger.warning(f"Batch of {len(chunk)} tiles failed ({e}); retrying individually.")
+                    chunk_results = []
+                    for tile, _ in chunk:
+                        try:
+                            chunk_results.append(self.adapter.predict(image_data=tile, targets=targets, **kwargs))
+                        except Exception as tile_error:
+                            logger.error(f"Error processing tile {tile.name}: {tile_error}")
+                            chunk_results.append(None)
+
+                for (_, json_output_path), results in zip(chunk, chunk_results):
+                    if results is None:
+                        continue
+                    json_output_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(json_output_path, "w", encoding="utf-8") as jf:
+                        json.dump(results, jf, indent=2)
+
+                progress.update(len(chunk))
+                if (start // batch_size + 1) % clear_vram_frequency == 0:
+                    self._clear_vram()
+
+        self._clear_vram()
 
     def run_on_directory(
         self,
@@ -136,36 +166,9 @@ class BatchInferenceRunner:
         if filter_tiles:
             tile_paths = self._usable_tiles(tile_paths)
 
-        overwrite_allowed = getattr(config, 'DEFAULT_OVERWRITE', False)
+        # Extract relative path to replicate structure in the output directory
+        jobs = [(tile_path, out_dir / tile_path.relative_to(input_dir).with_suffix(".json")) for tile_path in tile_paths]
+        self._run_jobs(jobs, targets, "Directory Inference", clear_vram_frequency, **kwargs)
 
-        for idx, tile_path in enumerate(tqdm(tile_paths, desc="Directory Inference")):
-            # Extract relative path to replicate structure in the output directory
-            relative_path = tile_path.relative_to(input_dir)
-            json_output_path = out_dir / relative_path.with_suffix(".json")
-
-            if json_output_path.exists() and not overwrite_allowed:
-                continue
-                
-            # Ensure subdirectories exist before writing
-            json_output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            try:
-                results = self.adapter.predict(
-                    image_data=tile_path,
-                    targets=targets,
-                    **kwargs,
-                )
-
-                with open(json_output_path, "w", encoding="utf-8") as jf:
-                    json.dump(results, jf, indent=2)
-
-            except Exception as e:
-                logger.error(f"Failed processing tile {tile_path.name}: {e}")
-                continue
-
-            if (idx + 1) % clear_vram_frequency == 0:
-                self._clear_vram()
-
-        self._clear_vram()
         logger.info(f"Directory processing finished. Output directory: {out_dir}")
         return out_dir

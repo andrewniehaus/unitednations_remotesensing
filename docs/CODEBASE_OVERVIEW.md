@@ -255,3 +255,11 @@ These fixes make every module compile and import (checked with Python's parser a
 - `detection/run_detection.py`: runs on the chipper's manifest by default instead of every `.tif` in `data/interim` (which included tiles left over from other images). `--all-files` restores the old behaviour; `--no-filter` disables the tile filter.
 - `tiling/chipper.py`: NoData pixels are left out of each tile's contrast stretch, and windows under `MIN_CHIP_VALID_FRACTION` (5 %, new in `config.py`) valid pixels are not written.
 - New `docs/performance_baseline.md` with reference timings.
+
+### 2026-11-25 — Batching and speed settings (Claude Code, for charliefp03-dg)
+
+- `detection/florence2_adapter.py`: new `predict_many()` runs `FLORENCE2_BATCH_SIZE` chips per model call; `predict()` and `predict_tile()` share the same generation code. Only chips with the same target prompt are batched together, because Florence-2 does not mask padded prompt tokens. Batched results are identical to unbatched ones.
+- `detection/batch_runner.py`: sends tiles to `predict_many()` in batches when the adapter has it, still writing one JSON per tile; a failed batch is retried tile by tile.
+- `config.py`: new `FLORENCE2_NUM_BEAMS` (3) and `FLORENCE2_BATCH_SIZE` (1).
+- `run_pipeline.py`: new `--tile-size`, `--stride`, `--num-beams` and `--batch-size` options. Without `--stride`, the stride keeps the configured 75 % ratio to the tile size.
+- `docs/performance_baseline.md`: results of the chip size, beam and batch experiments. Defaults are unchanged.

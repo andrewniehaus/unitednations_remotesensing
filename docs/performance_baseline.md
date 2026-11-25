@@ -45,3 +45,22 @@ Test image with NoData corners (same scene, 68 % of pixels inside a diamond foot
 Before these changes, `run_detection.py` without `--manifest` ran on every `.tif` in `data/interim`: these 100 chips plus any left over from other images (121 here), about 221 chips or roughly 29 minutes.
 
 The re-run of 10 chips on the baseline image gave identical boxes and confidences to the baseline (7.4 s per chip).
+
+## 2026-11-25 speed experiments (items 4–7)
+
+**Run-to-run noise:** the same 10 chips with the same settings took 6.0–9.2 s per chip across runs on this laptop. Differences under about 15 % are not meaningful here; compare runs made back to back.
+
+Same 10 chips (512 px) unless noted:
+
+| Setting | s per chip | Results vs baseline | Verdict |
+|---|---|---|---|
+| Reference: 3 beams, batch 1 | 8.1 | identical | — |
+| `--num-beams 1` | 8.0 | same boxes; confidence differs in the 5th decimal | No gain on CPU: image encoding dominates and outputs are short (one box). May help on real imagery with many objects per chip, where outputs are longer. |
+| `--batch-size 2` | 7.9 | identical | No gain on CPU |
+| `--batch-size 5` | 7.5 | identical | ~8 %, within noise on CPU. Expected to help on a GPU; worth trying 4–8 there. |
+| `--tile-size 768` (stride 576), 10 chips back to back with 512 | 6.7 vs 6.0 | different chips | Same cost per chip, because Florence-2 resizes every chip to 768 x 768 either way |
+| `--tile-size 768`, whole image | 49 chips, 202 s detection (3 min 38 s total) | different chips | **2.5x fewer chips** than 512 px (121), so roughly 2.5x faster per image. Each object is seen at 1:1 instead of enlarged 1.5x, which may cost recall on very small objects: check on real imagery before making it the default. |
+
+**Model load (item 7):** 6–12 s across eight runs, under 1 % of a whole-image run. Preloading weights or loading once for several images is not worth building yet.
+
+**Defaults are unchanged** (512 px, 3 beams, batch 1). All three are now options on `run_pipeline` (`--tile-size`, `--stride`, `--num-beams`, `--batch-size`) and settings in `config.py` (`DEFAULT_TILE_SIZE`, `FLORENCE2_NUM_BEAMS`, `FLORENCE2_BATCH_SIZE`).

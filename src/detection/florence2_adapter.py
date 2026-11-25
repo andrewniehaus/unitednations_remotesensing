@@ -56,7 +56,8 @@ class Florence2Adapter:
         self.model_dir = model_dir or (config.MODELS_DIR / "florence2")
         self.device = config.DEVICE
         self.torch_dtype = config.TORCH_DTYPE
-        self.num_beams = 3
+        self.num_beams = config.FLORENCE2_NUM_BEAMS
+        self.batch_size = config.FLORENCE2_BATCH_SIZE
 
         # Load offline model weights and processor
         self.processor = AutoProcessor.from_pretrained(
@@ -97,19 +98,36 @@ class Florence2Adapter:
         Returns:
             pd.DataFrame: Detection records with pixel coordinates and labels.
         """
-        if isinstance(image_input, (str, Path)):
-            image = Image.open(image_input).convert("RGB")
-        else:
-            image = image_input.convert("RGB")
-
         prompt = task_prompt + text_input if text_input else task_prompt
+        parsed_answer, box_scores = self._generate([self._load_image(image_input)], task_prompt, prompt)[0]
 
-        inputs = self.processor(text=prompt, images=image, return_tensors="pt").to(
+        return self._format_parsed_output(parsed_answer, task_prompt, x_offset, y_offset, box_scores)
+
+    @staticmethod
+    def _load_image(image_input: Union[str, Path, Image.Image]) -> Image.Image:
+        """Opens a tile path or converts a PIL image to RGB."""
+        if isinstance(image_input, (str, Path)):
+            return Image.open(image_input).convert("RGB")
+        return image_input.convert("RGB")
+
+    def _generate(
+        self, images: List[Image.Image], task_prompt: str, prompt: str
+    ) -> List[Tuple[Dict[str, Any], Optional[List[float]]]]:
+        """
+        Runs one model call over images that share a prompt.
+
+        A shared prompt keeps every token sequence the same length. Florence-2 does not mask
+        padded prompt tokens, so mixing prompts of different lengths in one call would change results.
+
+        Returns:
+            (parsed output, per-box confidences or None) for each image, in input order.
+        """
+        inputs = self.processor(text=[prompt] * len(images), images=images, return_tensors="pt").to(
             device=self.device, dtype=self.torch_dtype
         )
 
         with torch.no_grad():
-            generated_ids = self.model.generate(
+            generated = self.model.generate(
                 input_ids=inputs["input_ids"],
                 pixel_values=inputs["pixel_values"],
                 max_new_tokens=1024,
@@ -119,20 +137,33 @@ class Florence2Adapter:
                 return_dict_in_generate=True,
             )
 
-        generated_text = self.processor.batch_decode(
-            generated_ids.sequences, skip_special_tokens=False
-        )[0]
+        texts = self.processor.batch_decode(generated.sequences, skip_special_tokens=False)
+        transition_scores = self._transition_scores(generated)
 
-        parsed_answer = self.processor.post_process_generation(
-            generated_text,
-            task=task_prompt,
-            image_size=(image.width, image.height)
-        )
-        box_scores = self._box_scores(generated_ids, (image.width, image.height))
+        results = []
+        for i, image in enumerate(images):
+            image_size = (image.width, image.height)
+            parsed = self.processor.post_process_generation(texts[i], task=task_prompt, image_size=image_size)
+            scores = None if transition_scores is None else transition_scores[i]
+            results.append((parsed, self._box_scores(generated.sequences[i], scores, image_size)))
+        return results
 
-        return self._format_parsed_output(parsed_answer, task_prompt, x_offset, y_offset, box_scores)
+    def _transition_scores(self, generated: Any) -> Optional[torch.Tensor]:
+        """Log-probability of each generated token, one row per image; None if unavailable."""
+        try:
+            return self.model.compute_transition_scores(
+                sequences=generated.sequences,
+                scores=generated.scores,
+                beam_indices=getattr(generated, "beam_indices", None),
+                normalize_logits=self.num_beams == 1,  # beam search scores are already log-probabilities
+            )
+        except Exception as e:
+            logger.warning(f"Could not compute Florence-2 token scores: {e}")
+            return None
 
-    def _box_scores(self, generated: Any, image_size: Tuple[int, int]) -> Optional[List[float]]:
+    def _box_scores(
+        self, sequence: torch.Tensor, transition_scores: Optional[torch.Tensor], image_size: Tuple[int, int]
+    ) -> Optional[List[float]]:
         """
         Per-box confidence from the probabilities of the generated tokens, in output order.
 
@@ -141,24 +172,26 @@ class Florence2Adapter:
         measure. Its <OD> parser applies this, but <OPEN_VOCABULARY_DETECTION> doesn't, so it
         is computed here. Returns None if the scores can't be lined up with the boxes.
         """
+        if transition_scores is None:
+            return None
         try:
-            transition_scores = self.model.compute_transition_scores(
-                sequences=generated.sequences,
-                scores=generated.scores,
-                beam_indices=getattr(generated, "beam_indices", None),
-                normalize_logits=self.num_beams == 1,  # beam search scores are already log-probabilities
-            )[0].tolist()
-            token_ids = generated.sequences[0].tolist()[1:]  # drop the decoder start token
-            if len(token_ids) != len(transition_scores):
-                logger.warning(f"{len(token_ids)} tokens but {len(transition_scores)} token scores.")
+            token_ids = sequence.tolist()[1:]  # drop the decoder start token
+            # In a batch, shorter outputs are padded after their end token; score up to that token
+            eos_id = self.processor.tokenizer.eos_token_id
+            if eos_id in token_ids:
+                token_ids = token_ids[: token_ids.index(eos_id) + 1]
+            token_scores = transition_scores.tolist()
+            if len(token_scores) < len(token_ids):
+                logger.warning(f"{len(token_ids)} tokens but {len(token_scores)} token scores.")
                 return None
+            token_scores = token_scores[: len(token_ids)]
 
             post_processor = self.processor.post_processor
             text, spans = post_processor.decode_with_spans(self.processor.tokenizer, token_ids)
             if "<poly>" in text:
                 return None  # polygon output; no boxes to score
             instances = post_processor.parse_description_with_bboxes_from_text_and_spans(
-                text, spans=spans, scores=transition_scores, score_mode="avg_loc_scores", image_size=image_size
+                text, spans=spans, scores=token_scores, score_mode="avg_loc_scores", image_size=image_size
             )
             return [instance["score"] for instance in instances]
         except Exception as e:
@@ -268,27 +301,43 @@ class Florence2Adapter:
         Returns:
             List of detection dicts in local tile pixel coordinates.
         """
+        return self.predict_many([image_data], targets, task_prompt)[0]
+
+    def predict_many(
+        self,
+        images: List[Union[str, Path, Image.Image]],
+        targets: Union[str, List[str]],
+        task_prompt: str = "<OPEN_VOCABULARY_DETECTION>",
+        **kwargs: Any,
+    ) -> List[List[Dict[str, Any]]]:
+        """
+        Batched form of predict(): runs self.batch_size images per model call.
+
+        Returns:
+            One list of detection dicts per input image, in input order.
+        """
         from src.detection.prompt_manager import PromptManager
 
         target_list = [targets] if isinstance(targets, str) else list(targets)
         prompt_manager = PromptManager()
+        loaded = [self._load_image(image) for image in images]
+        detections: List[List[Dict[str, Any]]] = [[] for _ in loaded]
 
         # Florence-2 treats a joined prompt as one phrase, so query each target separately
         # and label detections with the target that produced them.
-        detections = []
         for target in target_list:
-            df = self.predict_tile(
-                image_input=image_data,
-                task_prompt=task_prompt,
-                text_input=prompt_manager.get_target(target)["primary_prompt"],
-            )
-            detections.extend(
-                {
-                    "bbox": [row.xmin, row.ymin, row.xmax, row.ymax],
-                    "label": target,
-                    "confidence": row.confidence,
-                }
-                for row in df.itertuples(index=False)
-            )
+            prompt = task_prompt + prompt_manager.get_target(target)["primary_prompt"]
+            for start in range(0, len(loaded), self.batch_size):
+                batch = loaded[start:start + self.batch_size]
+                for offset, (parsed, box_scores) in enumerate(self._generate(batch, task_prompt, prompt)):
+                    df = self._format_parsed_output(parsed, task_prompt, 0, 0, box_scores)
+                    detections[start + offset].extend(
+                        {
+                            "bbox": [row.xmin, row.ymin, row.xmax, row.ymax],
+                            "label": target,
+                            "confidence": row.confidence,
+                        }
+                        for row in df.itertuples(index=False)
+                    )
 
         return detections
