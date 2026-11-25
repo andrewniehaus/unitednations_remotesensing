@@ -15,6 +15,7 @@ import torch
 from tqdm import tqdm
 
 from src import config
+from src.tiling.spatial_filter import SpatialTileFilter
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,25 @@ class BatchInferenceRunner:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    def _usable_tiles(self, tile_paths: List[Path]) -> List[Path]:
+        """Drops tiles that are mostly empty, cloudy, or featureless before any model call."""
+        kept, rejected = SpatialTileFilter().filter_paths(tile_paths)
+        logger.info(
+            f"Tile filter: {len(kept)} kept, {len(rejected)} rejected "
+            f"(reasons in {config.PROCESSED_DIR / 'tile_rejection_manifest.json'})."
+        )
+        return kept
+
     def run_on_manifest(
         self,
         manifest_path: Path,
         targets: Union[str, List[str]],
         output_dir: Optional[Path] = None,
         clear_vram_frequency: int = getattr(config, 'DEFAULT_CLEAR_VRAM_FREQ', 10),
+        filter_tiles: bool = True,
         **kwargs: Any,
     ) -> Path:
+        """Runs the model on the manifest's tiles; unusable tiles are skipped unless filter_tiles is False."""
         if not manifest_path.exists():
             raise FileNotFoundError(f"Manifest not found at {manifest_path}")
 
@@ -52,14 +64,10 @@ class BatchInferenceRunner:
         out_dir = output_dir or (config.INTERIM_DIR / "vlm_results")
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Starting batch inference over {len(tiles_info)} tiles.")
-
-        overwrite_allowed = getattr(config, 'DEFAULT_OVERWRITE', False)
-
-        for idx, tile_record in enumerate(tqdm(tiles_info, desc="VLM Tile Inference")):
+        # Resolve tile paths (prioritize absolute, then manifest relative, then interim relative)
+        tile_paths: Dict[Path, Path] = {}
+        for tile_record in tiles_info:
             raw_path = Path(tile_record["filename"])
-            
-            # Safely resolve tile path (prioritize absolute, then manifest relative, then interim relative)
             if raw_path.is_absolute():
                 tile_path = raw_path
             elif (manifest_path.parent / raw_path).exists():
@@ -67,15 +75,21 @@ class BatchInferenceRunner:
             else:
                 tile_path = config.INTERIM_DIR / raw_path
 
-            # Preserve directory structure in output
-            json_filename = raw_path.with_suffix(".json")
-            json_output_path = out_dir / json_filename
-
-            if json_output_path.exists() and not overwrite_allowed:
-                continue
-
             if not tile_path.exists():
                 logger.warning(f"Tile image missing: {tile_path}. Skipping.")
+                continue
+            tile_paths[tile_path] = raw_path
+
+        usable = self._usable_tiles(list(tile_paths)) if filter_tiles else list(tile_paths)
+        logger.info(f"Starting batch inference over {len(usable)} tiles.")
+
+        overwrite_allowed = getattr(config, 'DEFAULT_OVERWRITE', False)
+
+        for idx, tile_path in enumerate(tqdm(usable, desc="VLM Tile Inference")):
+            # Preserve directory structure in output
+            json_output_path = out_dir / tile_paths[tile_path].with_suffix(".json")
+
+            if json_output_path.exists() and not overwrite_allowed:
                 continue
 
             # Ensure subdirectories exist before writing
@@ -109,14 +123,18 @@ class BatchInferenceRunner:
         output_dir: Optional[Path] = None,
         file_extension: str = ".tif",
         clear_vram_frequency: int = getattr(config, 'DEFAULT_CLEAR_VRAM_FREQ', 10),
+        filter_tiles: bool = True,
         **kwargs: Any,
     ) -> Path:
+        """Runs the model on every matching file under input_dir; unusable tiles are skipped unless filter_tiles is False."""
         # Use rglob to capture potential subdirectories and ensure relative structures are maintained
         tile_paths = list(input_dir.rglob(f"*{file_extension}"))
         out_dir = output_dir or (config.INTERIM_DIR / "vlm_results")
         out_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(f"Found {len(tile_paths)} tiles matching '{file_extension}' in {input_dir}")
+        if filter_tiles:
+            tile_paths = self._usable_tiles(tile_paths)
 
         overwrite_allowed = getattr(config, 'DEFAULT_OVERWRITE', False)
 

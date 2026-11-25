@@ -8,8 +8,9 @@ weights from config.MODELS_DIR / "florence2" and executes multi-task prompt quer
 (Open-Vocabulary Detection, Phrase Grounding) over tiled image inputs.
 """
 
+import logging
 from pathlib import Path
-from typing import Dict, List, Union, Optional, Any
+from typing import Dict, List, Tuple, Union, Optional, Any
 from unittest.mock import patch
 import torch
 import numpy as np
@@ -20,6 +21,11 @@ from transformers.dynamic_module_utils import get_imports
 
 # Dynamic Configuration Import (Air-Gapped Workstation Standard)
 from src import config
+
+logger = logging.getLogger(__name__)
+
+# Used only when per-box scores can't be read from the model output (a warning is logged)
+FALLBACK_CONFIDENCE = 0.85
 
 
 def _get_imports_without_flash_attn(filename: Union[str, Path]) -> List[str]:
@@ -50,6 +56,7 @@ class Florence2Adapter:
         self.model_dir = model_dir or (config.MODELS_DIR / "florence2")
         self.device = config.DEVICE
         self.torch_dtype = config.TORCH_DTYPE
+        self.num_beams = 3
 
         # Load offline model weights and processor
         self.processor = AutoProcessor.from_pretrained(
@@ -106,8 +113,8 @@ class Florence2Adapter:
                 input_ids=inputs["input_ids"],
                 pixel_values=inputs["pixel_values"],
                 max_new_tokens=1024,
-                num_beams=3,
-                early_stopping=True,    
+                num_beams=self.num_beams,
+                early_stopping=True,
                 output_scores=True,
                 return_dict_in_generate=True,
             )
@@ -121,15 +128,50 @@ class Florence2Adapter:
             task=task_prompt,
             image_size=(image.width, image.height)
         )
+        box_scores = self._box_scores(generated_ids, (image.width, image.height))
 
-        return self._format_parsed_output(parsed_answer, task_prompt, x_offset, y_offset)
+        return self._format_parsed_output(parsed_answer, task_prompt, x_offset, y_offset, box_scores)
+
+    def _box_scores(self, generated: Any, image_size: Tuple[int, int]) -> Optional[List[float]]:
+        """
+        Per-box confidence from the probabilities of the generated tokens, in output order.
+
+        Florence-2 writes each box as four <loc_N> tokens. A box's confidence is the geometric
+        mean of those four tokens' probabilities, which is Florence-2's own 'avg_loc_scores'
+        measure. Its <OD> parser applies this, but <OPEN_VOCABULARY_DETECTION> doesn't, so it
+        is computed here. Returns None if the scores can't be lined up with the boxes.
+        """
+        try:
+            transition_scores = self.model.compute_transition_scores(
+                sequences=generated.sequences,
+                scores=generated.scores,
+                beam_indices=getattr(generated, "beam_indices", None),
+                normalize_logits=self.num_beams == 1,  # beam search scores are already log-probabilities
+            )[0].tolist()
+            token_ids = generated.sequences[0].tolist()[1:]  # drop the decoder start token
+            if len(token_ids) != len(transition_scores):
+                logger.warning(f"{len(token_ids)} tokens but {len(transition_scores)} token scores.")
+                return None
+
+            post_processor = self.processor.post_processor
+            text, spans = post_processor.decode_with_spans(self.processor.tokenizer, token_ids)
+            if "<poly>" in text:
+                return None  # polygon output; no boxes to score
+            instances = post_processor.parse_description_with_bboxes_from_text_and_spans(
+                text, spans=spans, scores=transition_scores, score_mode="avg_loc_scores", image_size=image_size
+            )
+            return [instance["score"] for instance in instances]
+        except Exception as e:
+            logger.warning(f"Could not compute Florence-2 box scores: {e}")
+            return None
 
     def _format_parsed_output(
         self,
         parsed_data: Dict[str, Any],
         task_prompt: str,
         x_offset: int,
-        y_offset: int
+        y_offset: int,
+        box_scores: Optional[List[float]] = None,
     ) -> pd.DataFrame:
         """
         Formats raw model output dictionaries into standard Pandas DataFrames.
@@ -142,7 +184,13 @@ class Florence2Adapter:
             # <OD> returns "labels"; <OPEN_VOCABULARY_DETECTION> returns "bboxes_labels"
             labels = data.get("labels", data.get("bboxes_labels", []))
 
-            for bbox, label in zip(bboxes, labels):
+            if bboxes and (box_scores is None or len(box_scores) != len(bboxes)):
+                logger.warning(
+                    f"No per-box scores for {len(bboxes)} boxes; using fallback confidence {FALLBACK_CONFIDENCE}."
+                )
+                box_scores = None
+
+            for i, (bbox, label) in enumerate(zip(bboxes, labels)):
                 # Florence-2 box format: [xmin, ymin, xmax, ymax]
                 xmin = float(bbox[0]) + x_offset
                 ymin = float(bbox[1]) + y_offset
@@ -150,12 +198,12 @@ class Florence2Adapter:
                 ymax = float(bbox[3]) + y_offset
 
                 records.append({
-                    # "xmin": xmin,
-                    # "ymin": ymin,
-                    # "xmax": xmax,
-                    # "ymax": ymax,
-                    # "label": str(label).strip(),
-                    # "confidence": 0.85,  # Baseline score placeholder for generation outputs
+                    "xmin": xmin,
+                    "ymin": ymin,
+                    "xmax": xmax,
+                    "ymax": ymax,
+                    "label": str(label).strip(),
+                    "confidence": box_scores[i] if box_scores is not None else FALLBACK_CONFIDENCE,
                 })
 
         # Feature 4: Clear VRAM cache after execution

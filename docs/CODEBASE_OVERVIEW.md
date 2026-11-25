@@ -247,3 +247,11 @@ These fixes make every module compile and import (checked with Python's parser a
 - `tiling/chipper.py`: re-chipping a raster now replaces its tiles and first removes that raster's earlier tiles and `vlm_results` JSONs, so old content can't be paired with a new manifest.
 - `environment.yml`: pinned `gdal=3.10`, `rasterio=1.4`, `geopandas=1.0`, `pyproj=3.7` and `shapely=2.0` to avoid a conda solver stall.
 - `detection_run.log` is no longer tracked by git. Pulling this change deletes the tracked copy; run `git restore detection_run.log` first if the pull reports local changes to it.
+
+### 2026-11-25 — Box confidence and skipping unusable chips (Claude Code, for charliefp03-dg)
+
+- `detection/florence2_adapter.py`: restored the detection record fields (coordinates and label come from the model). `confidence` is no longer a fixed 0.85: each box gets the geometric mean of the probabilities of its four location tokens (Florence-2's own `avg_loc_scores` measure). It reflects how precisely the model placed the box, not whether the object exists. 0.85 is kept only as a logged fallback. Beam count is now `self.num_beams`.
+- `detection/batch_runner.py`: `run_on_manifest` and `run_on_directory` skip tiles rejected by `SpatialTileFilter` before calling the model (`filter_tiles=False` turns this off). New shared method `SpatialTileFilter.filter_paths()`; `run_pipeline.py` uses it too and doesn't filter twice.
+- `detection/run_detection.py`: runs on the chipper's manifest by default instead of every `.tif` in `data/interim` (which included tiles left over from other images). `--all-files` restores the old behaviour; `--no-filter` disables the tile filter.
+- `tiling/chipper.py`: NoData pixels are left out of each tile's contrast stretch, and windows under `MIN_CHIP_VALID_FRACTION` (5 %, new in `config.py`) valid pixels are not written.
+- New `docs/performance_baseline.md` with reference timings.

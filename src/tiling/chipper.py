@@ -190,14 +190,16 @@ class RasterChipper:
         source_stem: str,
         row_idx: int,
         col_idx: int,
+        nodata: Optional[Union[int, float]] = None,
     ) -> Dict[str, Any]:
         """Worker function to normalize, pad, georeference, and write a tile concurrently."""
         _, orig_h, orig_w = tile_data.shape
         pad_h = self.tile_size - orig_h
         pad_w = self.tile_size - orig_w
 
-        # 1. Normalize raw array to standard 8-bit, 3-channel RGB for VLM ingestion
-        tile_data = self.normalizer.normalize(tile_data)
+        # 1. Normalize raw array to standard 8-bit, 3-channel RGB for VLM ingestion.
+        # NoData pixels are left out of the contrast stretch so borders don't flatten the real image.
+        tile_data = self.normalizer.normalize(tile_data, nodata=nodata)
 
         # 2. Pad the normalized array to uniform dimensions
         padded_data = self.pad_tile(tile_data)
@@ -250,6 +252,15 @@ class RasterChipper:
         for stale_file in stale_files:
             stale_file.unlink()
 
+    @staticmethod
+    def _valid_fraction(tile_data: np.ndarray, nodata: Union[int, float]) -> float:
+        """Share of pixels holding data in any band."""
+        if np.isnan(nodata):
+            invalid = np.isnan(tile_data)
+        else:
+            invalid = tile_data == nodata
+        return float(np.mean(~np.all(invalid, axis=0)))
+
     def chip_raster(self, input_path: Path) -> Path:
         """Executes the complete tiling workflow for a single input raster using concurrent I/O.
 
@@ -271,7 +282,8 @@ class RasterChipper:
                 for row_idx, col_idx, window in self.get_tile_windows(src):
                     tile_data = src.read(window=window)
 
-                    if np.all(tile_data == nodata_val):
+                    # Skip windows that are (almost) all NoData, e.g. outside the image footprint
+                    if self._valid_fraction(tile_data, nodata_val) < config.MIN_CHIP_VALID_FRACTION:
                         continue
 
                     future = executor.submit(
@@ -283,6 +295,7 @@ class RasterChipper:
                         source_stem,
                         row_idx,
                         col_idx,
+                        nodata_val,
                     )
                     futures.append(future)
 

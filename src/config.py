@@ -79,6 +79,7 @@ DEFAULT_CLIP_PERCENTILE = (2.0, 98.0)  # Robust min/max scaling to ignore atmosp
 # batch_runner.py and vector_writer.py that were previously undefined (import-time AttributeError).
 DEFAULT_PADDING_MODE = "constant"  # np.pad mode for partial edge tiles ('constant', 'reflect', 'edge')
 DEFAULT_FILL_VALUE = 0             # Pad/NoData value for written tiles (constant padding mode)
+MIN_CHIP_VALID_FRACTION = 0.05     # Chipper skips windows with less valid (non-NoData) area than this; SpatialTileFilter makes the stricter keep/drop decision
 MANIFEST_FILENAME = "tile_manifest.json"  # Chipper manifest written to INTERIM_DIR
 TILE_NAMING_SCHEMA = "{source_name}_r{row}_c{col}.tif"  # Tile filename template used by chipper
 DEFAULT_OVERWRITE = False  # If False, existing inference JSONs are skipped (resumable runs); re-chipping always replaces tiles

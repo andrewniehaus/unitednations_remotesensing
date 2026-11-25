@@ -13,7 +13,7 @@ import os
 import json
 import numpy as np
 import rasterio
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Tuple
 from pathlib import Path
 
@@ -123,45 +123,42 @@ class SpatialTileFilter:
             # Drop unreadable or corrupted files generated during chipping
             return False, f"read_error_{str(e)}"
 
+    def filter_paths(self, tile_paths: List[Path]) -> Tuple[List[Path], Dict[str, str]]:
+        """
+        Evaluates tiles in parallel and records why any were rejected.
+
+        Writes the rejections to config.PROCESSED_DIR / "tile_rejection_manifest.json".
+
+        Args:
+            tile_paths (List[Path]): Tiles to evaluate.
+
+        Returns:
+            Tuple[List[Path], Dict[str, str]]: Kept tiles in input order, and rejection reasons by filename.
+        """
+        # Threads keep raster reads from blocking one another
+        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+            outcomes = list(executor.map(self.evaluate_tile, tile_paths))
+
+        kept = [path for path, (is_valid, _) in zip(tile_paths, outcomes) if is_valid]
+        rejected = {path.name: reason for path, (is_valid, reason) in zip(tile_paths, outcomes) if not is_valid}
+
+        manifest_path = Path(config.PROCESSED_DIR) / "tile_rejection_manifest.json"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(rejected, f, indent=4)
+
+        return kept, rejected
+
     def filter_directory(self) -> List[Path]:
         """
-        Feature 3 & 5: Multi-threaded directory scanning and manifest logging.
-        Scans config.INTERIM_DIR, evaluates all tiles, and logs rejections.
-        
+        Feature 3 & 5: Evaluates every tile in config.INTERIM_DIR and logs rejections.
+
         Returns:
             List[Path]: A list of file paths that passed all filtering checks.
         """
-        valid_tiles = []
-        rejection_manifest: Dict[str, str] = {}
-        
-        # Load interim directory from strict air-gapped configuration
-        interim_dir = Path(config.INTERIM_DIR)
-        tile_paths = list(interim_dir.glob("*.tif"))
-        
+        tile_paths = list(Path(config.INTERIM_DIR).glob("*.tif"))
         if not tile_paths:
-            return valid_tiles
-
-        # ThreadPoolExecutor to prevent I/O blocking during massive array reads
-        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-            future_to_path = {executor.submit(self.evaluate_tile, path): path for path in tile_paths}
-            
-            for future in as_completed(future_to_path):
-                path = future_to_path[future]
-                is_valid, reason = future.result()
-                
-                if is_valid:
-                    valid_tiles.append(path)
-                else:
-                    rejection_manifest[path.name] = reason
-                    # Optionally delete the file here to immediately free disk space
-                    # os.remove(path)
-
-        # Feature 5: Save manifest for auditing/debugging
-        manifest_path = Path(config.PROCESSED_DIR) / "tile_rejection_manifest.json"
-        with open(manifest_path, "w") as f:
-            json.dump(rejection_manifest, f, indent=4)
-
-        return valid_tiles
+            return []
+        return self.filter_paths(tile_paths)[0]
 
 if __name__ == "__main__":
     # Example direct execution structure

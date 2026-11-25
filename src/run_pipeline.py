@@ -6,14 +6,13 @@ GeoPackage to config.PROCESSED_DIR, optionally scoring it against ground truth.
 The detection refinement modules (post-processing, ensembling, verification) are not run yet.
 
 Run from the repository root:
-    python -m src.run_pipeline --input synthetic_vantor_targets.tif --profile military_infrastructure
+    python -m src.run_pipeline --input synthetic_vantor_targets.tif --profile disaster_response
 """
 
 import argparse
 import json
 import logging
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -46,18 +45,11 @@ def resolve_input(input_arg: str) -> Path:
 def filter_tiles(manifest: Dict[str, Any], max_tiles: int = 0) -> Path:
     """Evaluates every manifest tile and writes a manifest holding only the usable ones."""
     tiles = sorted(manifest["tiles"], key=lambda t: (t["row_idx"], t["col_idx"]))
-    tile_filter = SpatialTileFilter()
-
-    with ThreadPoolExecutor() as executor:
-        outcomes = list(executor.map(
-            lambda tile: tile_filter.evaluate_tile(config.INTERIM_DIR / tile["filename"]), tiles
-        ))
-
-    kept = [tile for tile, (is_valid, _) in zip(tiles, outcomes) if is_valid]
-    rejected = {tile["filename"]: reason for tile, (is_valid, reason) in zip(tiles, outcomes) if not is_valid}
-
-    with open(config.PROCESSED_DIR / "tile_rejection_manifest.json", "w", encoding="utf-8") as f:
-        json.dump(rejected, f, indent=4)
+    kept_paths, rejected = SpatialTileFilter().filter_paths(
+        [config.INTERIM_DIR / tile["filename"] for tile in tiles]
+    )
+    kept_names = {path.name for path in kept_paths}
+    kept = [tile for tile in tiles if tile["filename"] in kept_names]
     logger.info(f"Tile filter: {len(kept)} kept, {len(rejected)} rejected.")
 
     if not kept:
@@ -159,7 +151,8 @@ def main() -> None:
     logger.info(f"Running {args.model} with profile '{args.profile}': {targets}")
     results_dir = config.INTERIM_DIR / "vlm_results"
     BatchInferenceRunner(model_adapter=load_adapter(args.model)).run_on_manifest(
-        manifest_path=filtered_manifest_path, targets=targets, output_dir=results_dir
+        manifest_path=filtered_manifest_path, targets=targets, output_dir=results_dir,
+        filter_tiles=False,  # already filtered above
     )
 
     writer = VectorWriter()
